@@ -328,7 +328,7 @@ td:first-child{font-family:'IBM Plex Sans',sans-serif;}
     <table>
       <thead>
         <tr>
-          <th>Entity</th><th>Type</th><th>%</th><th>County</th><th>Description / Legal</th><th>Notes</th><th>Coords</th><th></th>
+          <th>Date</th><th>Entity</th><th>Type</th><th>%</th><th>County</th><th>Description / Legal</th><th>Notes</th><th>Coords</th><th></th>
         </tr>
       </thead>
       <tbody id="tbl-body"></tbody>
@@ -359,6 +359,10 @@ td:first-child{font-family:'IBM Plex Sans',sans-serif;}
         <label class="fl">Percentage (%)</label>
         <input type="number" class="fi" id="f-pct" min="0" max="100" step="0.0001" placeholder="e.g. 12.5000">
       </div>
+    </div>
+    <div class="fg">
+      <label class="fl">Instrument Date</label>
+      <input type="date" class="fi" id="f-date">
     </div>
     <div class="fg">
       <label class="fl">Legal Description</label>
@@ -544,7 +548,8 @@ function renderEntities(){
     el.innerHTML='<div class="empty">No entities yet.<br>Add one below to begin.</div>';
     return;
   }
-  el.innerHTML = entities.map(e=>{
+  const sorted = [...entities].sort((a,b)=>a.name.localeCompare(b.name));
+  el.innerHTML = sorted.map(e=>{
     const cnt = interests.filter(i=>i.entityId===e.id).length;
     return `
       <div class="entity-item ${e.id===selEntityId?'active':''}" onclick="selectEntity('${e.id}')">
@@ -562,7 +567,8 @@ function renderLegend(){
     el.innerHTML='<div style="font-size:0.68rem;color:var(--text-dim)">No entities</div>';
     return;
   }
-  el.innerHTML = entities.map(e=>`
+  const sorted = [...entities].sort((a,b)=>a.name.localeCompare(b.name));
+  el.innerHTML = sorted.map(e=>`
     <div class="leg-item">
       <div class="leg-dot" style="background:${e.color};box-shadow:0 0 4px ${e.color}80"></div>
       <span>${e.name}</span>
@@ -576,19 +582,22 @@ function openModal(id){
   document.getElementById('m-title').textContent = isEdit ? 'Edit Interest' : 'Add Oil Interest';
 
   const sel = document.getElementById('f-entity');
-  sel.innerHTML = entities.map(e=>`<option value="${e.id}">${e.name}</option>`).join('');
+  const sortedEntities = [...entities].sort((a,b)=>a.name.localeCompare(b.name));
+  sel.innerHTML = sortedEntities.map(e=>`<option value="${e.id}">${e.name}</option>`).join('');
 
   if(isEdit){
     const i = interests.find(x=>x.id===id);
     sel.value = i.entityId;
     document.getElementById('f-type').value = i.type;
     document.getElementById('f-pct').value = i.pct;
+    document.getElementById('f-date').value = i.date||'';
     document.getElementById('f-desc').value = i.desc;
     document.getElementById('f-notes').value = i.notes;
   } else {
     if(selEntityId) sel.value = selEntityId;
     document.getElementById('f-type').value = 'WI';
     document.getElementById('f-pct').value = '';
+    document.getElementById('f-date').value = '';
     document.getElementById('f-desc').value = '';
     document.getElementById('f-notes').value = '';
   }
@@ -605,17 +614,18 @@ function saveInterest(){
   const entityId = document.getElementById('f-entity').value;
   const type     = document.getElementById('f-type').value;
   const pct      = parseFloat(document.getElementById('f-pct').value)||0;
+  const date     = document.getElementById('f-date').value.trim();
   const desc     = document.getElementById('f-desc').value.trim();
   const notes    = document.getElementById('f-notes').value.trim();
   if(!entityId){ alert('Please select an entity.'); return; }
 
   if(editId!==null){
     const i = interests.find(x=>x.id===editId);
-    Object.assign(i,{entityId,type,pct,desc,notes});
+    Object.assign(i,{entityId,type,pct,date,desc,notes});
   } else {
     const county = getCounty(pendingLL);
     interests.push({
-      id:'i'+Date.now(), entityId, type, pct, desc, notes, county,
+      id:'i'+Date.now(), entityId, type, pct, date, desc, notes, county,
       lat:pendingLL.lat, lng:pendingLL.lng
     });
   }
@@ -631,34 +641,80 @@ function getCounty(ll){
   return 'Outside Area';
 }
 
-// ===== MARKERS =====
+// ===== MARKERS + TRACT POLYGONS =====
+const tractLayer = L.layerGroup().addTo(map);
+
 function renderMarkers(){
   markerGroup.clearLayers();
+  tractLayer.clearLayers();
+
   interests.forEach(i=>{
     const color = getEntityColor(i.entityId);
     const name  = getEntityName(i.entityId);
     const isUnassigned = i.entityId==='UNASSIGNED';
-    const icon = L.divIcon({
-      className:'',
-      html:`<div style="width:20px;height:20px;background:${color};border:2.5px solid rgba(255,255,255,0.9);border-radius:50% 50% 50% 0;transform:rotate(-45deg);box-shadow:0 2px 10px rgba(0,0,0,0.6),0 0 8px ${color}60;${isUnassigned?'opacity:0.6':''}"></div>`,
-      iconAnchor:[10,20], iconSize:[20,20]
-    });
-    const m = L.marker([i.lat,i.lng],{icon});
     const displayName = i.imported && isUnassigned ? (i.label||'Imported') : name;
-    m.bindPopup(`
+
+    const popupHTML = `
       <div class="p-title" style="color:${color}">${displayName}</div>
       ${isUnassigned?'<div style="background:#92400E;color:#FCD34D;padding:3px 8px;border-radius:3px;font-size:0.68rem;margin-bottom:8px">⚠ UNASSIGNED — Edit to link to an entity</div>':''}
       <div class="p-row"><span class="p-lbl">Type</span><span class="p-val"><span class="badge ${i.type}">${i.type}</span></span></div>
       ${i.pct>0?`<div class="p-row"><span class="p-lbl">Interest</span><span class="p-val">${i.pct.toFixed(4)}%</span></div>`:''}
       <div class="p-row"><span class="p-lbl">County</span><span class="p-val">${i.county}</span></div>
+      ${i.date?`<div class="p-row"><span class="p-lbl">Date</span><span class="p-val">${i.date}</span></div>`:''}
       ${i.desc?`<div class="p-row"><span class="p-lbl">Legal</span><span class="p-val" style="max-width:180px;white-space:normal;text-align:right;font-size:0.65rem">${i.desc}</span></div>`:''}
       ${i.notes?`<div class="p-row"><span class="p-lbl">Notes</span><span class="p-val" style="max-width:180px;white-space:normal;text-align:right;font-size:0.65rem">${i.notes}</span></div>`:''}
       <div class="p-acts">
         <button class="btn btn-sm" onclick="editInterest('${i.id}')">Edit</button>
         <button class="btn btn-sm btn-danger" onclick="deleteInterest('${i.id}')">Delete</button>
-      </div>
-    `,{maxWidth:300});
-    markerGroup.addLayer(m);
+      </div>`;
+
+    // Draw tract bounding box if bounds defined
+    if(i.bounds){
+      const rect = L.rectangle(i.bounds, {
+        color: color,
+        weight: 2,
+        opacity: isUnassigned ? 0.45 : 0.9,
+        fill: true,
+        fillColor: color,
+        fillOpacity: isUnassigned ? 0.07 : 0.18,
+        dashArray: isUnassigned ? '5 4' : null
+      });
+      rect.bindPopup(popupHTML, {maxWidth:300});
+      tractLayer.addLayer(rect);
+
+      // Label pin centered on the tract
+      const [[s,w],[n,e]] = i.bounds;
+      const clat = (s+n)/2, clng = (w+e)/2;
+      const icon = L.divIcon({
+        className:'',
+        html:`<div style="
+          background:${color};
+          color:#000;
+          font-family:'IBM Plex Mono',monospace;
+          font-size:9px;
+          font-weight:700;
+          padding:2px 5px;
+          border-radius:3px;
+          white-space:nowrap;
+          box-shadow:0 1px 6px rgba(0,0,0,0.7);
+          opacity:${isUnassigned?0.6:1};
+          letter-spacing:0.04em;
+        ">${i.type}${i.pct>0?' '+i.pct.toFixed(2)+'%':''}</div>`,
+        iconAnchor:[0,0]
+      });
+      const lbl = L.marker([clat, clng], {icon, interactive:false});
+      tractLayer.addLayer(lbl);
+    } else {
+      // Fallback pin for interests without defined bounds
+      const icon = L.divIcon({
+        className:'',
+        html:`<div style="width:18px;height:18px;background:${color};border:2.5px solid rgba(255,255,255,0.85);border-radius:50% 50% 50% 0;transform:rotate(-45deg);box-shadow:0 2px 8px rgba(0,0,0,0.6),0 0 6px ${color}60;${isUnassigned?'opacity:0.5':''}"></div>`,
+        iconAnchor:[9,18], iconSize:[18,18]
+      });
+      const m = L.marker([i.lat,i.lng],{icon});
+      m.bindPopup(popupHTML,{maxWidth:300});
+      markerGroup.addLayer(m);
+    }
   });
 }
 
@@ -672,23 +728,32 @@ function deleteInterest(id){
 function flyTo(id){
   const i = interests.find(x=>x.id===id);
   if(!i) return;
-  map.flyTo([i.lat,i.lng],13,{duration:0.7});
+  if(i.bounds){
+    map.fitBounds(i.bounds, {padding:[40,40], maxZoom:15, animate:true, duration:0.7});
+  } else {
+    map.flyTo([i.lat,i.lng],14,{duration:0.7});
+  }
 }
 
 // ===== SIDEBAR LIST =====
+function sortedInterests(){
+  return [...interests].sort((a,b)=>b.pct - a.pct);
+}
+
 function renderInterestList(){
   const el = document.getElementById('i-scroll');
   if(!interests.length){
     el.innerHTML=`<div class="empty">Add entities then click<br><strong style="color:var(--amber)">📍 Add Interest</strong><br>to place markers on the map.</div>`;
     return;
   }
-  el.innerHTML = [...interests].reverse().map(i=>{
+  el.innerHTML = sortedInterests().map(i=>{
     const color = getEntityColor(i.entityId);
     const name  = getEntityName(i.entityId);
     const displayName = i.imported && i.entityId==='UNASSIGNED' ? (i.label||name) : name;
+    const dateStr = i.date ? `<span style="font-family:'IBM Plex Mono',monospace;font-size:0.62rem;color:var(--amber);opacity:0.8">${i.date}</span> · ` : '';
     return `<div class="i-item" style="border-left-color:${color}" onclick="flyTo('${i.id}')">
       <div class="i-name">${i.desc||displayName}</div>
-      <div class="i-meta">${displayName} · ${i.type}${i.pct>0?' · '+i.pct.toFixed(4)+'%':''} · ${i.county}</div>
+      <div class="i-meta">${dateStr}${displayName} · ${i.type}${i.pct>0?' · '+i.pct.toFixed(4)+'%':''} · ${i.county}</div>
     </div>`;
   }).join('');
 }
@@ -698,14 +763,15 @@ function renderTable(){
   const body = document.getElementById('tbl-body');
   document.getElementById('tp-cnt').textContent=`(${interests.length} record${interests.length!==1?'s':''})`;
   if(!interests.length){
-    body.innerHTML=`<tr><td colspan="8" style="text-align:center;color:var(--text-dim);padding:18px">No interests recorded yet</td></tr>`;
+    body.innerHTML=`<tr><td colspan="9" style="text-align:center;color:var(--text-dim);padding:18px">No interests recorded yet</td></tr>`;
     return;
   }
-  body.innerHTML = interests.map(i=>{
+  body.innerHTML = sortedInterests().map(i=>{
     const color = getEntityColor(i.entityId);
     const name  = getEntityName(i.entityId);
     const displayName = i.imported && i.entityId==='UNASSIGNED' ? (i.label||name) : name;
     return `<tr onclick="flyTo('${i.id}')">
+      <td style="font-family:'IBM Plex Mono',monospace;color:var(--amber);font-size:0.68rem;white-space:nowrap">${i.date||'—'}</td>
       <td><span style="display:inline-flex;align-items:center;gap:6px"><span style="width:8px;height:8px;border-radius:50%;background:${color};box-shadow:0 0 4px ${color}80;display:inline-block"></span>${displayName}</span></td>
       <td><span class="badge ${i.type}">${i.type}</span></td>
       <td>${i.pct>0?i.pct.toFixed(4)+'%':'—'}</td>
@@ -850,97 +916,119 @@ const DOC_INTERESTS = [
   // ── Vol 418/194 & 418/198: Original OGL (Jan 1974) ─────────────────────
   // Lessor royalty – Morgan family / Frank Council et al.
   // Lessee: D.E. Billings, Trustee, Midland TX
+  // ── Section grid reference (Block B, CCSD&RGNG, Upton Co.) ─────────────
+  // Full section ≈ 0.0145° lat × 0.0175° lng
+  // Quarter section ≈ 0.00725° lat × 0.00875° lng
+  //
+  // Sec 25 full:  S=31.5628  N=31.5773  W=-102.0688  E=-102.0513
+  // Sec 26 full:  S=31.5455  N=31.5600  W=-102.0688  E=-102.0513
+  // Sec 27 full:  S=31.5455  N=31.5600  W=-102.0338  E=-102.0163  (shifted E)
+  // Sec 33 full:  S=31.5165  N=31.5310  W=-102.0688  E=-102.0513
+
   {id:'d01', entityId:'UNASSIGNED', label:'D.E. Billings, Trustee (Lessee)',
-   type:'WI', pct:100.0, county:'Upton',
+   type:'WI', pct:100.0, county:'Upton', date:'1974-01-14',
+   // Full lease: Secs 25, 26, N/2 Sec 27, Sec 33
+   bounds:[[31.5165,-102.0688],[31.5773,-102.0163]],
    desc:'Secs 25/26/27/33, Blk "B", CCSD&RGNG Survey — OGL Vol 418/194',
    notes:'OGL dated Jan 14 1974 from W.R. Morgan & Prebble Durham Morgan. Instr #64000.',
-   lat:31.565, lng:-102.060},
-  {id:'d02', entityId:'UNASSIGNED', label:'D.E. Billings, Trustee (Lessee – Sec 27 S/2)',
-   type:'WI', pct:100.0, county:'Upton',
+   lat:31.547, lng:-102.043},
+  {id:'d02', entityId:'UNASSIGNED', label:'D.E. Billings, Trustee (Lessee – S/2 Sec 27)',
+   type:'WI', pct:100.0, county:'Upton', date:'1974-01-11',
+   // S/2 Sec 27
+   bounds:[[31.5455,-102.0338],[31.5528,-102.0163]],
    desc:'S/2 Sec 27, Blk "B", CCSD&RGNG Survey — OGL Vol 418/198',
    notes:'OGL dated Jan 11 1974 from Frank Council et al. Instr #64002.',
-   lat:31.555, lng:-102.028},
+   lat:31.549, lng:-102.025},
 
-  // ── Vol 462/172: Westland → Parker & Parsley (Oct 1 1979) ─────────────
-  // NW/4 Sec 25 – below 7,194 ft equiv / above 8,900 ft — Morgan "B" Well #1
+  // NW/4 Sec 25 — Morgan "B" Well #1
   {id:'d03', entityId:'UNASSIGNED', label:'Westland Oil Dev. Corp. (reserved ORRI)',
-   type:'ORRI', pct:6.25, county:'Upton',
+   type:'ORRI', pct:6.25, county:'Upton', date:'1979-10-01',
+   bounds:[[31.5700,-102.0688],[31.5773,-102.0600]],
    desc:'NW/4 Sec 25, Blk "B", CCSD&RGNG Survey — Vol 462/172',
    notes:'1/16 of 8/8 ORRI reserved by Westland. Converts at payout to 1/8 of 8/8 ORRI or 33-1/3% WI. Morgan "B" Well #1. Instr #74403.',
-   lat:31.573, lng:-102.075},
+   lat:31.5737, lng:-102.0644},
   {id:'d04', entityId:'UNASSIGNED', label:'Howard W. Parker (WI — Morgan "B" #1)',
-   type:'WI', pct:16.016, county:'Upton',
+   type:'WI', pct:16.016, county:'Upton', date:'1979-10-01',
+   bounds:[[31.5700,-102.0688],[31.5773,-102.0600]],
    desc:'NW/4 Sec 25, Blk "B", CCSD&RGNG Survey — Vol 462/172',
-   notes:'11/64 less 1/2 of 3% WI. Operated under Parker & Parsley Inc. Farmout Agmt Dec 13 1978.',
-   lat:31.573, lng:-102.077},
+   notes:'11/64 less 1/2 of 3% WI. Parker & Parsley Inc. Farmout Agmt Dec 13 1978.',
+   lat:31.5737, lng:-102.0644},
   {id:'d05', entityId:'UNASSIGNED', label:'Joe M. Parsley (WI — Morgan "B" #1)',
-   type:'WI', pct:16.016, county:'Upton',
+   type:'WI', pct:16.016, county:'Upton', date:'1979-10-01',
+   bounds:[[31.5700,-102.0688],[31.5773,-102.0600]],
    desc:'NW/4 Sec 25, Blk "B", CCSD&RGNG Survey — Vol 462/172',
    notes:'11/64 less 1/2 of 3% WI. Co-operator.',
-   lat:31.573, lng:-102.073},
+   lat:31.5737, lng:-102.0644},
 
-  // ── Vol 462/632: ORRI to HenLan Inc (Nov 21 1979) ─────────────────────
+  // NW/4 Sec 25 — HenLan ORRI
   {id:'d06', entityId:'UNASSIGNED', label:'HenLan, Inc. (ORRI — NW/4 Sec 25)',
-   type:'ORRI', pct:3.125, county:'Upton',
+   type:'ORRI', pct:3.125, county:'Upton', date:'1979-11-21',
+   bounds:[[31.5700,-102.0688],[31.5773,-102.0600]],
    desc:'NW/4 Sec 25, Blk "B", CCSD&RGNG Survey — Vol 462/632',
    notes:'1/32 of 8/8 ORRI. Converts at payout to 1/32 WI if Westland converts to 1/8 of 8/8. Instr #74685.',
-   lat:31.575, lng:-102.071},
+   lat:31.5737, lng:-102.0644},
 
-  // ── Vol 462/634: Parker & Parsley → individuals (Morgan "C" — NE/4 Sec 25) ─
+  // NE/4 Sec 25 — Morgan "C" #1
   {id:'d07', entityId:'UNASSIGNED', label:'Howard W. Parker (WI — Morgan "C" #1)',
-   type:'WI', pct:12.50, county:'Upton',
+   type:'WI', pct:12.50, county:'Upton', date:'1979-11-02',
+   bounds:[[31.5700,-102.0600],[31.5773,-102.0513]],
    desc:'NE/4 Sec 25, Blk "B", CCSD&RGNG Survey — Vol 462/634',
    notes:'13/64 less 1/2 of 3% of 15/16 WI. Subject to Westland 1/16 ORRI & HenLan 1/32 ORRI. Instr #74686.',
-   lat:31.573, lng:-102.045},
+   lat:31.5737, lng:-102.0557},
   {id:'d08', entityId:'UNASSIGNED', label:'Joe M. Parsley (WI — Morgan "C" #1)',
-   type:'WI', pct:12.50, county:'Upton',
+   type:'WI', pct:12.50, county:'Upton', date:'1979-11-02',
+   bounds:[[31.5700,-102.0600],[31.5773,-102.0513]],
    desc:'NE/4 Sec 25, Blk "B", CCSD&RGNG Survey — Vol 462/634',
    notes:'13/64 less 1/2 of 3% of 15/16 WI.',
-   lat:31.571, lng:-102.043},
+   lat:31.5737, lng:-102.0557},
 
-  // ── Vol 463/795: Westland → Parker & Parsley (Jan 22 1980) ───────────
-  // SE/4 Sec 26 – Morgan "E" Well #1
+  // SE/4 Sec 26 — Morgan "E" #1
   {id:'d09', entityId:'UNASSIGNED', label:'Westland Oil Dev. Corp. (ORRI — SE/4 Sec 26)',
-   type:'ORRI', pct:6.25, county:'Upton',
+   type:'ORRI', pct:6.25, county:'Upton', date:'1980-01-22',
+   bounds:[[31.5455,-102.0600],[31.5528,-102.0513]],
    desc:'SE/4 Sec 26, Blk "B", CCSD&RGNG Survey — Vol 463/795',
    notes:'1/16 of 8/8 ORRI reserved by Westland. Converts at payout to 1/8 of 8/8 ORRI or 33-1/3% WI. Morgan "E" Well #1. Instr #75285.',
-   lat:31.543, lng:-102.045},
+   lat:31.5492, lng:-102.0557},
   {id:'d10', entityId:'UNASSIGNED', label:'Howard W. Parker (WI — Morgan "E" #1)',
-   type:'WI', pct:16.016, county:'Upton',
+   type:'WI', pct:16.016, county:'Upton', date:'1980-01-22',
+   bounds:[[31.5455,-102.0600],[31.5528,-102.0513]],
    desc:'SE/4 Sec 26, Blk "B", CCSD&RGNG Survey — Vol 463/795',
    notes:'Farmout Agmt Dec 13 1978.',
-   lat:31.543, lng:-102.047},
+   lat:31.5492, lng:-102.0557},
   {id:'d11', entityId:'UNASSIGNED', label:'Joe M. Parsley (WI — Morgan "E" #1)',
-   type:'WI', pct:16.016, county:'Upton',
+   type:'WI', pct:16.016, county:'Upton', date:'1980-01-22',
+   bounds:[[31.5455,-102.0600],[31.5528,-102.0513]],
    desc:'SE/4 Sec 26, Blk "B", CCSD&RGNG Survey — Vol 463/795',
    notes:'',
-   lat:31.543, lng:-102.043},
+   lat:31.5492, lng:-102.0557},
 
-  // ── Vol 464/3: Parker & Parsley → individuals (SW/4 Sec 26) ──────────
+  // SW/4 Sec 26
   {id:'d12', entityId:'UNASSIGNED', label:'Howard W. Parker (WI — SW/4 Sec 26)',
-   type:'WI', pct:12.50, county:'Upton',
+   type:'WI', pct:12.50, county:'Upton', date:'1979-12-21',
+   bounds:[[31.5455,-102.0688],[31.5528,-102.0600]],
    desc:'SW/4 Sec 26, Blk "B", CCSD&RGNG Survey — Vol 464/3',
    notes:'5/32 less 1/2 of 3% of 15/16 WI. Subject to Westland ORRI & HenLan ORRI. Effective Dec 21 1979. Instr #75310.',
-   lat:31.543, lng:-102.075},
+   lat:31.5492, lng:-102.0644},
   {id:'d13', entityId:'UNASSIGNED', label:'Joe M. Parsley (WI — SW/4 Sec 26)',
-   type:'WI', pct:12.50, county:'Upton',
+   type:'WI', pct:12.50, county:'Upton', date:'1979-12-21',
+   bounds:[[31.5455,-102.0688],[31.5528,-102.0600]],
    desc:'SW/4 Sec 26, Blk "B", CCSD&RGNG Survey — Vol 464/3',
    notes:'5/32 less 1/2 of 3% of 15/16 WI.',
-   lat:31.541, lng:-102.073},
-
-  // ── Vol 464/6: ORRI to HenLan Inc (SW/4 Sec 26) ──────────────────────
+   lat:31.5492, lng:-102.0644},
   {id:'d14', entityId:'UNASSIGNED', label:'HenLan, Inc. (ORRI — SW/4 Sec 26)',
-   type:'ORRI', pct:3.125, county:'Upton',
+   type:'ORRI', pct:3.125, county:'Upton', date:'1979-12-21',
+   bounds:[[31.5455,-102.0688],[31.5528,-102.0600]],
    desc:'SW/4 Sec 26, Blk "B", CCSD&RGNG Survey — Vol 464/6',
    notes:'1/32 of 8/8 ORRI. Converts at payout per Letter Agmt Jan 9 1979. Instr #75311.',
-   lat:31.545, lng:-102.071},
+   lat:31.5492, lng:-102.0644},
 
-  // ── Vol 173/588: MBank Lien → MCorp (May 1988) ────────────────────────
-  {id:'d15', entityId:'UNASSIGNED', label:'MCorp Mgmt Solutions Inc. (Lien/Security Int.)',
-   type:'NPI', pct:0.0, county:'Upton',
+  // MCorp lien — covers whole lease area
+  {id:'d15', entityId:'UNASSIGNED', label:'MCorp Mgmt Solutions Inc. (Lien)',
+   type:'NPI', pct:0.0, county:'Upton', date:'1988-01-01',
+   bounds:[[31.5165,-102.0688],[31.5773,-102.0163]],
    desc:'Glasscock & Reagan Co. interests — Vol 173/588 D/T Records',
    notes:'Assignment of Loan Docs, Liens & Security Interests from MBank Houston N.A. to MCorp Mgmt Solutions. Covers Westland Oil Dev Corp properties in Glasscock/Reagan/Upton/Midland. Instr #98792. Effective Jan 1 1988.',
-   lat:31.560, lng:-102.055},
+   lat:31.547, lng:-102.043},
 ];
 
 // ===== IMPORT FROM DOCUMENTS =====
