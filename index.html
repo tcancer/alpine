@@ -275,6 +275,7 @@ td:first-child{font-family:'IBM Plex Sans',sans-serif;}
   </div>
   <div class="h-actions">
     <button class="btn btn-sm" id="add-mode-btn" onclick="toggleMode()">📍 Add Interest</button>
+    <button class="btn btn-sm" id="grid-btn" onclick="toggleGrid()" title="Toggle section grid overlay">⊞ Grid</button>
     <button class="btn btn-sm" onclick="importDocs()" title="Load interests extracted from uploaded deed records">📄 Import Docs</button>
     <button class="btn btn-sm" onclick="exportCSV()">↓ Export CSV</button>
     <button class="btn btn-sm btn-danger" onclick="clearAll()">✕ Clear Interests</button>
@@ -419,35 +420,45 @@ const map = L.map('map',{center:[31.58,-101.88],zoom:9,zoomControl:true});
 
 const MAPBOX_TOKEN = 'pk.eyJ1Ijoia2VubnlrYW5lYXR4IiwiYSI6ImNtbjd2ZXp1bTA0amYycXB5bWpibm1vNjYifQ.fvBvQ_QkZJpsUsJOG9DZsw';
 
+// Mapbox tile layers — use 512px tiles with tileSize/zoomOffset for crisp rendering
 const layers = {
   street: L.tileLayer(
-    `https://api.mapbox.com/styles/v1/mapbox/dark-v11/tiles/256/{z}/{x}/{y}@2x?access_token=${MAPBOX_TOKEN}`,{
+    `https://api.mapbox.com/styles/v1/mapbox/dark-v11/tiles/{z}/{x}/{y}?access_token=${MAPBOX_TOKEN}`,{
     attribution:'© <a href="https://www.mapbox.com/">Mapbox</a> © <a href="https://www.openstreetmap.org/">OpenStreetMap</a>',
-    maxZoom:22, crossOrigin:true
+    tileSize:512, zoomOffset:-1, maxZoom:22, crossOrigin:true
   }),
   satellite: L.tileLayer(
-    `https://api.mapbox.com/styles/v1/mapbox/satellite-streets-v12/tiles/256/{z}/{x}/{y}@2x?access_token=${MAPBOX_TOKEN}`,{
+    `https://api.mapbox.com/styles/v1/mapbox/satellite-streets-v12/tiles/{z}/{x}/{y}?access_token=${MAPBOX_TOKEN}`,{
     attribution:'© <a href="https://www.mapbox.com/">Mapbox</a> © <a href="https://www.openstreetmap.org/">OpenStreetMap</a>',
-    maxZoom:22, crossOrigin:true
-  }),
-  labels: L.tileLayer('',{}) // labels baked into satellite-streets style
+    tileSize:512, zoomOffset:-1, maxZoom:22, crossOrigin:true
+  })
 };
 
 // Default: satellite (labels + roads baked into satellite-streets-v12)
 layers.satellite.addTo(map);
 
-// Fallback: CARTO dark if Mapbox tiles fail
-const cartoDark = L.tileLayer(
+// Fallback: CARTO dark + Esri satellite if Mapbox tiles fail
+const cartoFallback = L.tileLayer(
   'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
   {attribution:'© OpenStreetMap, © CARTO', subdomains:'abcd', maxZoom:20}
 );
+const esriFallback = L.tileLayer(
+  'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+  {attribution:'Tiles © Esri — Source: Esri, Maxar, Earthstar Geographics', maxZoom:19}
+);
 let fallbackActive = false;
-layers.satellite.on('tileerror', ()=>{
+let tileErrorCount = 0;
+function activateFallback(){
   if(fallbackActive) return;
   fallbackActive = true;
-  map.removeLayer(layers.satellite);
-  cartoDark.addTo(map);
-});
+  try{ map.removeLayer(layers.satellite); }catch(e){}
+  try{ map.removeLayer(layers.street); }catch(e){}
+  if(useSatellite){ esriFallback.addTo(map); }
+  else { cartoFallback.addTo(map); }
+  console.warn('Mapbox tiles failed — activated fallback basemap');
+}
+layers.satellite.on('tileerror', ()=>{ tileErrorCount++; if(tileErrorCount>3) activateFallback(); });
+layers.street.on('tileerror', ()=>{ tileErrorCount++; if(tileErrorCount>3) activateFallback(); });
 
 // Draw county polygons
 const countyFills = {};
@@ -470,6 +481,72 @@ COUNTIES.forEach((c,i) => {
 });
 
 const markerGroup = L.layerGroup().addTo(map);
+
+// ===== SECTION GRID OVERLAY =====
+// Draws 1-mile section lines for the CCSD&RGNG Block B survey area
+// (where our deed records are) to help visually align tracts
+const sectionGridLayer = L.layerGroup();
+let gridVisible = false;
+
+function buildSectionGrid(){
+  sectionGridLayer.clearLayers();
+  // Draw grid for CCSD&RGNG Block B (the primary survey with deed data)
+  const grid = SURVEY_GRIDS['ccsd_b_upton'];
+  if(!grid) return;
+  const rows = 8; // show ~8 rows of sections
+  const cols = grid.cols;
+  const oLat = grid.origin[0], oLng = grid.origin[1];
+
+  for(let r=0; r<rows; r++){
+    for(let c=0; c<cols; c++){
+      const s = oLat + r * grid.secLat;
+      const w = oLng + c * grid.secLng;
+      const n = s + grid.secLat;
+      const e = w + grid.secLng;
+
+      // Section outline
+      L.rectangle([[s,w],[n,e]],{
+        color:'rgba(245,158,11,0.35)', weight:1, fill:false,
+        dashArray:'3 4', interactive:false
+      }).addTo(sectionGridLayer);
+
+      // Compute section number from row/col (reverse serpentine)
+      let col = c;
+      if(r % 2 === 1) col = (cols - 1) - c;
+      const secNum = r * cols + col + 1;
+
+      // Section number label
+      L.marker([(s+n)/2, (w+e)/2], {
+        icon: L.divIcon({
+          className:'',
+          html:`<div style="
+            font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:600;
+            color:rgba(245,158,11,0.55);text-align:center;
+            text-shadow:0 1px 3px rgba(0,0,0,0.9);pointer-events:none;
+            white-space:nowrap;
+          ">${secNum}</div>`,
+          iconAnchor:[8,6]
+        }),
+        interactive:false
+      }).addTo(sectionGridLayer);
+    }
+  }
+}
+// buildSectionGrid() called at init after SURVEY_GRIDS is defined
+
+function toggleGrid(){
+  gridVisible = !gridVisible;
+  const btn = document.getElementById('grid-btn');
+  if(gridVisible){
+    sectionGridLayer.addTo(map);
+    btn.classList.add('btn-active');
+    btn.textContent = '⊞ Grid ON';
+  } else {
+    map.removeLayer(sectionGridLayer);
+    btn.classList.remove('btn-active');
+    btn.textContent = '⊞ Grid';
+  }
+}
 
 map.on('mousemove', e=>{
   document.getElementById('coords-bar').innerHTML =
@@ -534,14 +611,28 @@ map.on('mouseup', e=>{
 // ===== BASEMAP TOGGLE =====
 function toggleBasemap(){
   useSatellite = !useSatellite;
-  if(useSatellite){
-    map.removeLayer(layers.street);
-    layers.satellite.addTo(map);
-    document.getElementById('basemap-btn').textContent='🗺 Street';
+  const btn = document.getElementById('basemap-btn');
+  if(fallbackActive){
+    // Switch between fallback layers
+    if(useSatellite){
+      try{ map.removeLayer(cartoFallback); }catch(e){}
+      esriFallback.addTo(map);
+      btn.textContent='🗺 Street';
+    } else {
+      try{ map.removeLayer(esriFallback); }catch(e){}
+      cartoFallback.addTo(map);
+      btn.textContent='🛰 Satellite';
+    }
   } else {
-    map.removeLayer(layers.satellite);
-    layers.street.addTo(map);
-    document.getElementById('basemap-btn').textContent='🛰 Satellite';
+    if(useSatellite){
+      try{ map.removeLayer(layers.street); }catch(e){}
+      layers.satellite.addTo(map);
+      btn.textContent='🗺 Street';
+    } else {
+      try{ map.removeLayer(layers.satellite); }catch(e){}
+      layers.street.addTo(map);
+      btn.textContent='🛰 Satellite';
+    }
   }
 }
 
@@ -689,9 +780,7 @@ function saveInterest(){
   renderAll();
 }
 
-// Standard Texas section dimensions in decimal degrees
-const SEC_LAT = 0.01453;  // ~1 mile N/S
-const SEC_LNG = 0.01750;  // ~1 mile E/W
+// Note: SEC_LAT & SEC_LNG are defined alongside the survey grid constants below
 
 // Subdivision → [latFraction, lngFraction] of a full section
 const SUBDIV_SIZE = {
@@ -729,99 +818,119 @@ function getSubdivSize(text){
 //   All of Section 7, Blk C-13, PSL Survey, Glasscock Co.
 //   SW/4 NE/4 Sec 3, Blk 33, GC&SF Survey, Reagan Co.
 
-// Survey grid anchors: {surveyKey: {origin: [lat,lng], secLat, secLng, layout}}
-// origin = SW corner of Section 1 (or lowest-numbered section in grid)
-// secLat = degrees lat per section, secLng = degrees lng per section
-// layout: function(secNum) => [row, col] offsets from origin
+// ── Precise section dimensions at ~31.5° N latitude ──
+// 1 mile N/S ≈ 0.01449° lat (69.0 mi/deg)
+// 1 mile E/W ≈ 0.01706° lng at 31.5°N (58.6 mi/deg, cos(31.5°) = 0.8526)
+const SEC_DEG_LAT = 0.01449;
+const SEC_DEG_LNG = 0.01706;
+const SEC_LAT = SEC_DEG_LAT;
+const SEC_LNG = SEC_DEG_LNG;
+
+// Survey grid anchors: {surveyKey: {origin:[lat,lng], secLat, secLng, cols, county, serpentine, layout}}
+// origin = SW corner of Section 1
+// serpentine = true for boustrophedon numbering (odd rows E, even rows W)
 const SURVEY_GRIDS = {
   // ── UPTON COUNTY ──────────────────────────────────────────────────────
-  // CCSD&RGNG (C.C.S.D. & R.G.N.G. Ry. Co.) Block B, Upton Co.
-  // Anchored from known deed record positions in Sections 25,26,27,33
+  // CCSD&RGNG Block B — anchored to deed records Secs 25,26,27,33
+  // Back-computed: Sec 25 center ≈ 31.570, -102.060
+  //   Sec 25 in a 6-col grid: row=4, col=0 (serpentine)
+  //   origin SW = 31.570 - 4*0.01449 - 0.00725 = 31.505
+  //   origin W  = -102.060 - 0*0.01706 - 0.00853 = -102.069
   'ccsd_b_upton': {
-    secLat: 0.01453, secLng: 0.01750,
-    origin: [31.3820, -102.2450], // SW corner of Sec 1 approximate
-    county: 'Upton',
-    layout(n){ return GRID_STRIP(n, 36, 6); } // ~6 cols, 36 rows
+    secLat: SEC_DEG_LAT, secLng: SEC_DEG_LNG,
+    origin: [31.5048, -102.0693],
+    county: 'Upton', cols: 6, serpentine: true,
+    layout(n){ return GRID_SERPENTINE(n, 6); }
   },
-  // H&TC (Houston & Texas Central) Survey, Upton Co.
+  // H&TC Survey, Upton Co. — blocks 1–38
   'htc_upton': {
-    secLat: 0.01453, secLng: 0.01750,
-    origin: [31.2500, -102.4800],
-    county: 'Upton',
-    layout(n){ return GRID_STRIP(n, 40, 8); }
+    secLat: SEC_DEG_LAT, secLng: SEC_DEG_LNG,
+    origin: [31.2200, -102.4500],
+    county: 'Upton', cols: 8, serpentine: true,
+    layout(n){ return GRID_SERPENTINE(n, 8); }
   },
-  // T&P (Texas & Pacific) Survey, Upton Co.
+  // T&P Survey, Upton Co. — blocks 30–35 common
   'tp_upton': {
-    secLat: 0.01453, secLng: 0.01750,
-    origin: [31.0900, -102.5500],
-    county: 'Upton',
-    layout(n){ return GRID_STRIP(n, 50, 10); }
+    secLat: SEC_DEG_LAT, secLng: SEC_DEG_LNG,
+    origin: [31.0900, -102.5200],
+    county: 'Upton', cols: 10, serpentine: true,
+    layout(n){ return GRID_SERPENTINE(n, 10); }
   },
 
   // ── MIDLAND COUNTY ────────────────────────────────────────────────────
-  // T&P (Texas & Pacific) Survey, Midland Co. — most common
+  // T&P Survey — most common, blocks 30–42 span the county
   'tp_midland': {
-    secLat: 0.01453, secLng: 0.01750,
-    origin: [31.6600, -102.5000],
-    county: 'Midland',
-    layout(n){ return GRID_STRIP(n, 80, 8); }
+    secLat: SEC_DEG_LAT, secLng: SEC_DEG_LNG,
+    origin: [31.6509, -102.5000],
+    county: 'Midland', cols: 8, serpentine: true,
+    layout(n){ return GRID_SERPENTINE(n, 8); }
   },
-  // W&NW (Waggoner & Northwest) Survey, Midland Co.
+  // W&NW Survey, Midland Co.
   'wnw_midland': {
-    secLat: 0.01453, secLng: 0.01750,
-    origin: [31.7200, -102.4500],
-    county: 'Midland',
-    layout(n){ return GRID_STRIP(n, 40, 8); }
+    secLat: SEC_DEG_LAT, secLng: SEC_DEG_LNG,
+    origin: [31.7200, -102.4200],
+    county: 'Midland', cols: 8, serpentine: true,
+    layout(n){ return GRID_SERPENTINE(n, 8); }
   },
-  // Spraberry (Trend Area) — uses T&P base grid
+  // Spraberry Trend Area — uses T&P base grid
   'spraberry_midland': {
-    secLat: 0.01453, secLng: 0.01750,
+    secLat: SEC_DEG_LAT, secLng: SEC_DEG_LNG,
     origin: [31.7000, -101.9000],
-    county: 'Midland',
-    layout(n){ return GRID_STRIP(n, 60, 6); }
+    county: 'Midland', cols: 6, serpentine: true,
+    layout(n){ return GRID_SERPENTINE(n, 6); }
   },
 
   // ── GLASSCOCK COUNTY ──────────────────────────────────────────────────
-  // PSL (Public School Lands) Survey, Glasscock Co.
+  // PSL Survey — blocks C-11 through C-14
   'psl_glasscock': {
-    secLat: 0.01453, secLng: 0.01750,
-    origin: [31.6600, -101.7700],
-    county: 'Glasscock',
-    layout(n){ return GRID_STRIP(n, 50, 10); }
+    secLat: SEC_DEG_LAT, secLng: SEC_DEG_LNG,
+    origin: [31.6509, -101.7700],
+    county: 'Glasscock', cols: 10, serpentine: true,
+    layout(n){ return GRID_SERPENTINE(n, 10); }
   },
-  // C-13 Block — Glasscock
+  // Block C-13 — Glasscock
   'c13_glasscock': {
-    secLat: 0.01453, secLng: 0.01750,
-    origin: [31.7000, -101.6500],
-    county: 'Glasscock',
-    layout(n){ return GRID_STRIP(n, 30, 6); }
+    secLat: SEC_DEG_LAT, secLng: SEC_DEG_LNG,
+    origin: [31.7000, -101.6200],
+    county: 'Glasscock', cols: 6, serpentine: true,
+    layout(n){ return GRID_SERPENTINE(n, 6); }
   },
-  // Howard-Glasscock (Consolidated) — Glasscock
+  // Howard-Glasscock Consolidated
   'hgc_glasscock': {
-    secLat: 0.01453, secLng: 0.01750,
+    secLat: SEC_DEG_LAT, secLng: SEC_DEG_LNG,
     origin: [31.6800, -101.5500],
-    county: 'Glasscock',
-    layout(n){ return GRID_STRIP(n, 40, 8); }
+    county: 'Glasscock', cols: 8, serpentine: true,
+    layout(n){ return GRID_SERPENTINE(n, 8); }
   },
 
   // ── REAGAN COUNTY ─────────────────────────────────────────────────────
-  // GC&SF (Gulf Colorado & Santa Fe) Survey, Reagan Co.
+  // GC&SF Survey — blocks 33–35 common
   'gcsf_reagan': {
-    secLat: 0.01453, secLng: 0.01750,
-    origin: [31.0900, -101.8300],
-    county: 'Reagan',
-    layout(n){ return GRID_STRIP(n, 60, 10); }
+    secLat: SEC_DEG_LAT, secLng: SEC_DEG_LNG,
+    origin: [31.0822, -101.8300],
+    county: 'Reagan', cols: 10, serpentine: true,
+    layout(n){ return GRID_SERPENTINE(n, 10); }
   },
   // T&P Survey, Reagan Co.
   'tp_reagan': {
-    secLat: 0.01453, secLng: 0.01750,
-    origin: [31.1200, -101.7500],
-    county: 'Reagan',
-    layout(n){ return GRID_STRIP(n, 50, 10); }
+    secLat: SEC_DEG_LAT, secLng: SEC_DEG_LNG,
+    origin: [31.1100, -101.7500],
+    county: 'Reagan', cols: 10, serpentine: true,
+    layout(n){ return GRID_SERPENTINE(n, 10); }
   },
 };
 
-// Simple east→west, south→north strip layout (common in Texas surveys)
+// Boustrophedon (serpentine) layout — standard Texas survey numbering
+// Odd rows count east (left to right), even rows count west (right to left)
+function GRID_SERPENTINE(n, cols){
+  const i = n - 1;
+  const row = Math.floor(i / cols);
+  let col = i % cols;
+  if(row % 2 === 1) col = (cols - 1) - col; // reverse even rows
+  return [row, col];
+}
+
+// Simple east→west, south→north strip layout (fallback)
 function GRID_STRIP(n, total, cols){
   const i = n - 1;
   const row = Math.floor(i / cols);
@@ -1135,19 +1244,6 @@ function toggleTable(){
   document.getElementById('tp-tog').textContent=tableOpen?'▴ collapse':'▾ expand';
 }
 
-function toggleBasemap(){
-  useSatellite = !useSatellite;
-  if(useSatellite){
-    map.removeLayer(layers.street);
-    layers.satellite.addTo(map);
-    document.getElementById('basemap-btn').textContent='🗺 Street';
-  } else {
-    map.removeLayer(layers.satellite);
-    layers.street.addTo(map);
-    document.getElementById('basemap-btn').textContent='🛰 Satellite';
-  }
-}
-
 // ===== MODE =====
 function toggleMode(){
   if(!entities.length){ alert('Add at least one entity before placing interests.'); return; }
@@ -1394,7 +1490,7 @@ function importDocs(){
     interests.push({
       id:d.id, entityId:d.entityId, type:d.type, pct:d.pct,
       desc:d.desc, notes:d.notes, county:d.county,
-      lat:d.lat, lng:d.lng, imported:true, label:d.label
+      lat:d.lat, lng:d.lng, bounds:d.bounds, imported:true, label:d.label
     });
     added++;
   });
@@ -1448,9 +1544,12 @@ DOC_INTERESTS.forEach(d=>{
   interests.push({
     id:d.id, entityId:d.entityId, type:d.type, pct:d.pct,
     desc:d.desc, notes:d.notes, county:d.county,
-    lat:d.lat, lng:d.lng, imported:true, label:d.label
+    lat:d.lat, lng:d.lng, bounds:d.bounds, imported:true, label:d.label
   });
 });
+
+// Build section grid now that SURVEY_GRIDS is defined
+buildSectionGrid();
 
 renderAll();
 // Zoom to show both the full 4-county area and the clustered deed pins in Upton
