@@ -260,6 +260,45 @@ td:first-child{font-family:'IBM Plex Sans',sans-serif;}
 ::-webkit-scrollbar-track{background:transparent;}
 ::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px;}
 ::-webkit-scrollbar-thumb:hover{background:#2D4A7A;}
+
+/* EDIT HANDLES */
+.edit-handle{
+  width:12px!important;height:12px!important;
+  margin-left:-6px!important;margin-top:-6px!important;
+  background:#FCD34D;border:2px solid #000;border-radius:2px;
+  cursor:nwse-resize;box-shadow:0 0 6px rgba(0,0,0,0.8);
+  z-index:1200!important;
+}
+.edit-handle-mid{
+  width:10px!important;height:10px!important;
+  margin-left:-5px!important;margin-top:-5px!important;
+  background:#60A5FA;border:2px solid #000;border-radius:50%;
+  cursor:move;box-shadow:0 0 6px rgba(0,0,0,0.8);
+  z-index:1200!important;
+}
+.edit-handle-move{
+  width:16px!important;height:16px!important;
+  margin-left:-8px!important;margin-top:-8px!important;
+  background:#F59E0B;border:2px solid #000;border-radius:50%;
+  cursor:grab;box-shadow:0 0 8px rgba(245,158,11,0.6);
+  z-index:1201!important;
+}
+.edit-banner{
+  position:absolute;bottom:60px;left:50%;transform:translateX(-50%);
+  background:rgba(245,158,11,0.95);color:#000;
+  font-family:'IBM Plex Mono',monospace;font-size:0.68rem;font-weight:600;
+  padding:7px 18px;border-radius:20px;z-index:1000;
+  box-shadow:0 2px 16px rgba(245,158,11,0.4);white-space:nowrap;
+  pointer-events:none;
+}
+/* BOUNDS DISPLAY in popup */
+.p-bounds{
+  margin-top:8px;padding:6px 8px;
+  background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.2);
+  border-radius:4px;font-family:'IBM Plex Mono',monospace;font-size:0.62rem;
+  color:var(--text-dim);line-height:1.5;
+}
+.p-bounds b{color:var(--amber);font-weight:600;}
 </style>
 </head>
 <body>
@@ -1110,46 +1149,63 @@ function getCounty(ll){
   return 'Outside Area';
 }
 
-// ===== TRACT POLYGONS ONLY — no pins =====
+// ===== INTERACTIVE TRACT RECTANGLES =====
 const tractLayer = L.layerGroup().addTo(map);
+const editHandleLayer = L.layerGroup().addTo(map);
+let activeEditId = null; // which interest is being boundary-edited
+
+function buildPopupHTML(i){
+  const color = getEntityColor(i.entityId);
+  const name  = getEntityName(i.entityId);
+  const isUnassigned = i.entityId==='UNASSIGNED';
+  const displayName = i.imported && isUnassigned ? (i.label||'Imported') : name;
+  const [[s,w],[n,e]] = i.bounds;
+
+  return `
+    <div class="p-title" style="color:${color}">${displayName}</div>
+    ${isUnassigned?'<div style="background:#92400E;color:#FCD34D;padding:3px 8px;border-radius:3px;font-size:0.68rem;margin-bottom:8px">⚠ UNASSIGNED — Edit to link to an entity</div>':''}
+    <div class="p-row"><span class="p-lbl">Type</span><span class="p-val"><span class="badge ${i.type}">${i.type}</span></span></div>
+    ${i.pct>0?`<div class="p-row"><span class="p-lbl">Interest</span><span class="p-val">${i.pct.toFixed(4)}%</span></div>`:''}
+    <div class="p-row"><span class="p-lbl">County</span><span class="p-val">${i.county}</span></div>
+    ${i.date?`<div class="p-row"><span class="p-lbl">Date</span><span class="p-val">${i.date}</span></div>`:''}
+    ${i.desc?`<div class="p-row"><span class="p-lbl">Legal</span><span class="p-val" style="max-width:180px;white-space:normal;text-align:right;font-size:0.65rem">${i.desc}</span></div>`:''}
+    ${i.notes?`<div class="p-row"><span class="p-lbl">Notes</span><span class="p-val" style="max-width:180px;white-space:normal;text-align:right;font-size:0.65rem">${i.notes}</span></div>`:''}
+    <div class="p-bounds">
+      <b>SW:</b> ${s.toFixed(6)}, ${w.toFixed(6)}<br>
+      <b>NE:</b> ${n.toFixed(6)}, ${e.toFixed(6)}
+    </div>
+    <div class="p-acts">
+      <button class="btn btn-sm btn-primary" onclick="startBoundsEdit('${i.id}')" title="Drag corners to reposition">⊞ Adjust Bounds</button>
+      <button class="btn btn-sm" onclick="editInterest('${i.id}')">Edit</button>
+      <button class="btn btn-sm btn-danger" onclick="deleteInterest('${i.id}')">Del</button>
+    </div>`;
+}
 
 function renderMarkers(){
   markerGroup.clearLayers();
   tractLayer.clearLayers();
+  // Don't clear edit handles if we're actively editing
+  if(!activeEditId) editHandleLayer.clearLayers();
 
   interests.forEach(i=>{
-    if(!i.bounds) return; // skip anything without a defined tract boundary
+    if(!i.bounds) return;
 
     const color = getEntityColor(i.entityId);
-    const name  = getEntityName(i.entityId);
     const isUnassigned = i.entityId==='UNASSIGNED';
-    const displayName = i.imported && isUnassigned ? (i.label||'Imported') : name;
-
-    const popupHTML = `
-      <div class="p-title" style="color:${color}">${displayName}</div>
-      ${isUnassigned?'<div style="background:#92400E;color:#FCD34D;padding:3px 8px;border-radius:3px;font-size:0.68rem;margin-bottom:8px">⚠ UNASSIGNED — Edit to link to an entity</div>':''}
-      <div class="p-row"><span class="p-lbl">Type</span><span class="p-val"><span class="badge ${i.type}">${i.type}</span></span></div>
-      ${i.pct>0?`<div class="p-row"><span class="p-lbl">Interest</span><span class="p-val">${i.pct.toFixed(4)}%</span></div>`:''}
-      <div class="p-row"><span class="p-lbl">County</span><span class="p-val">${i.county}</span></div>
-      ${i.date?`<div class="p-row"><span class="p-lbl">Date</span><span class="p-val">${i.date}</span></div>`:''}
-      ${i.desc?`<div class="p-row"><span class="p-lbl">Legal</span><span class="p-val" style="max-width:180px;white-space:normal;text-align:right;font-size:0.65rem">${i.desc}</span></div>`:''}
-      ${i.notes?`<div class="p-row"><span class="p-lbl">Notes</span><span class="p-val" style="max-width:180px;white-space:normal;text-align:right;font-size:0.65rem">${i.notes}</span></div>`:''}
-      <div class="p-acts">
-        <button class="btn btn-sm" onclick="editInterest('${i.id}')">Edit</button>
-        <button class="btn btn-sm btn-danger" onclick="deleteInterest('${i.id}')">Delete</button>
-      </div>`;
+    const isEditing = i.id === activeEditId;
 
     // Solid colored rectangle
     const rect = L.rectangle(i.bounds, {
-      color: color,
-      weight: 2.5,
+      color: isEditing ? '#FCD34D' : color,
+      weight: isEditing ? 3 : 2,
       opacity: isUnassigned ? 0.4 : 1.0,
       fill: true,
-      fillColor: color,
-      fillOpacity: isUnassigned ? 0.06 : 0.20,
-      dashArray: isUnassigned ? '6 4' : null
+      fillColor: isEditing ? '#FCD34D' : color,
+      fillOpacity: isEditing ? 0.08 : (isUnassigned ? 0.06 : 0.18),
+      dashArray: isEditing ? '6 3' : (isUnassigned ? '6 4' : null)
     });
-    rect.bindPopup(popupHTML, {maxWidth:300});
+    rect._interestId = i.id;
+    rect.bindPopup(()=> buildPopupHTML(i), {maxWidth:320});
     tractLayer.addLayer(rect);
 
     // Small text label centered on the tract
@@ -1171,6 +1227,159 @@ function renderMarkers(){
     });
     tractLayer.addLayer(L.marker([clat,clng],{icon:lbl,interactive:false}));
   });
+}
+
+// ===== BOUNDS EDITING — drag corners & edges to resize, center to move =====
+let _editBanner = null;
+
+function startBoundsEdit(id){
+  map.closePopup();
+  // Clear any previous edit session
+  if(activeEditId) stopBoundsEdit(false);
+  activeEditId = id;
+
+  // Show edit banner
+  if(!_editBanner){
+    _editBanner = document.createElement('div');
+    _editBanner.className = 'edit-banner';
+    document.getElementById('map-wrap').appendChild(_editBanner);
+  }
+  const interest = interests.find(x=>x.id===id);
+  _editBanner.textContent = `⊞ Editing bounds — drag handles to adjust  ·  ${interest.desc||interest.label||id}`;
+  _editBanner.style.display = 'block';
+
+  buildEditHandles(id);
+  renderMarkers(); // re-render to highlight the active tract
+}
+
+function stopBoundsEdit(rerender=true){
+  activeEditId = null;
+  editHandleLayer.clearLayers();
+  if(_editBanner) _editBanner.style.display = 'none';
+  if(rerender) renderAll();
+}
+
+function buildEditHandles(id){
+  editHandleLayer.clearLayers();
+  const interest = interests.find(x=>x.id===id);
+  if(!interest || !interest.bounds) return;
+
+  const [[s,w],[n,e]] = interest.bounds;
+  const clat = (s+n)/2, clng = (w+e)/2;
+
+  // Corner handles: SW, SE, NE, NW
+  const corners = [
+    {pos:'sw', lat:s, lng:w}, {pos:'se', lat:s, lng:e},
+    {pos:'ne', lat:n, lng:e}, {pos:'nw', lat:n, lng:w}
+  ];
+  // Edge midpoint handles: S, E, N, W
+  const edges = [
+    {pos:'s', lat:s, lng:clng}, {pos:'e', lat:clat, lng:e},
+    {pos:'n', lat:n, lng:clng}, {pos:'w', lat:clat, lng:w}
+  ];
+
+  corners.forEach(c=>{
+    const m = L.marker([c.lat, c.lng], {
+      icon: L.divIcon({className:'edit-handle'}),
+      draggable: true, zIndexOffset: 2000
+    });
+    m.on('drag', ()=> onCornerDrag(id, c.pos, m.getLatLng()));
+    m.on('dragend', ()=> onDragEnd(id));
+    editHandleLayer.addLayer(m);
+  });
+
+  edges.forEach(c=>{
+    const m = L.marker([c.lat, c.lng], {
+      icon: L.divIcon({className:'edit-handle-mid'}),
+      draggable: true, zIndexOffset: 1900
+    });
+    m.on('drag', ()=> onEdgeDrag(id, c.pos, m.getLatLng()));
+    m.on('dragend', ()=> onDragEnd(id));
+    editHandleLayer.addLayer(m);
+  });
+
+  // Center move handle
+  const moveM = L.marker([clat, clng], {
+    icon: L.divIcon({className:'edit-handle-move'}),
+    draggable: true, zIndexOffset: 2100
+  });
+  let moveStart = null;
+  moveM.on('dragstart', ()=>{
+    const i = interests.find(x=>x.id===id);
+    const [[ss,ww],[nn,ee]] = i.bounds;
+    moveStart = { lat:(ss+nn)/2, lng:(ww+ee)/2 };
+  });
+  moveM.on('drag', ()=>{
+    if(!moveStart) return;
+    const ll = moveM.getLatLng();
+    const dlat = ll.lat - moveStart.lat;
+    const dlng = ll.lng - moveStart.lng;
+    const i = interests.find(x=>x.id===id);
+    const [[ss,ww],[nn,ee]] = i.bounds;
+    const h = (nn-ss)/2, w2 = (ee-ww)/2;
+    const cLat = moveStart.lat + dlat, cLng = moveStart.lng + dlng;
+    i.bounds = [[cLat-h, cLng-w2],[cLat+h, cLng+w2]];
+    i.lat = cLat; i.lng = cLng;
+    updateEditRect(id);
+  });
+  moveM.on('dragend', ()=>{ moveStart=null; onDragEnd(id); });
+  editHandleLayer.addLayer(moveM);
+}
+
+function onCornerDrag(id, pos, ll){
+  const i = interests.find(x=>x.id===id);
+  let [[s,w],[n,e]] = i.bounds;
+  if(pos==='sw'){ s=ll.lat; w=ll.lng; }
+  if(pos==='se'){ s=ll.lat; e=ll.lng; }
+  if(pos==='ne'){ n=ll.lat; e=ll.lng; }
+  if(pos==='nw'){ n=ll.lat; w=ll.lng; }
+  // Enforce min size
+  if(n-s < 0.0005){ n = s + 0.0005; }
+  if(e-w < 0.0005){ e = w + 0.0005; }
+  i.bounds = [[s,w],[n,e]];
+  i.lat = (s+n)/2; i.lng = (w+e)/2;
+  updateEditRect(id);
+}
+
+function onEdgeDrag(id, pos, ll){
+  const i = interests.find(x=>x.id===id);
+  let [[s,w],[n,e]] = i.bounds;
+  if(pos==='s') s = ll.lat;
+  if(pos==='n') n = ll.lat;
+  if(pos==='w') w = ll.lng;
+  if(pos==='e') e = ll.lng;
+  if(n-s < 0.0005) n = s + 0.0005;
+  if(e-w < 0.0005) e = w + 0.0005;
+  i.bounds = [[s,w],[n,e]];
+  i.lat = (s+n)/2; i.lng = (w+e)/2;
+  updateEditRect(id);
+}
+
+// Live-update the rectangle on the map while dragging (without full re-render)
+function updateEditRect(id){
+  const i = interests.find(x=>x.id===id);
+  if(!i) return;
+  tractLayer.eachLayer(layer=>{
+    if(layer._interestId === id && layer.setBounds){
+      layer.setBounds(i.bounds);
+    }
+  });
+}
+
+function onDragEnd(id){
+  const i = interests.find(x=>x.id===id);
+  i.county = getCounty({lat:i.lat, lng:i.lng});
+  // Rebuild handles at new positions
+  buildEditHandles(id);
+  // Update table & sidebar (but not full renderMarkers to keep edit mode)
+  renderInterestList();
+  renderTable();
+  renderCounts();
+  // Update banner with new coords
+  if(_editBanner){
+    const [[s,w],[n,e]] = i.bounds;
+    _editBanner.textContent = `⊞ SW: ${s.toFixed(5)},${w.toFixed(5)}  NE: ${n.toFixed(5)},${e.toFixed(5)}  ·  ${i.desc||i.label||id}`;
+  }
 }
 
 function editInterest(id){ map.closePopup(); openModal(id); }
@@ -1332,7 +1541,8 @@ function renderCounts(){
 // ===== KEYBOARD =====
 document.addEventListener('keydown',e=>{
   if(e.key==='Escape'){
-    if(placing) toggleMode();
+    if(activeEditId) stopBoundsEdit();
+    else if(placing) toggleMode();
     if(!document.getElementById('overlay').classList.contains('hide')) cancelModal();
   }
   if(e.key==='Enter' && document.activeElement===document.getElementById('e-name')) addEntity();
