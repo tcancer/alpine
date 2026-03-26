@@ -311,7 +311,7 @@ td:first-child{font-family:'IBM Plex Sans',sans-serif;}
   <!-- MAP -->
   <div id="map-wrap">
     <div id="map"></div>
-    <div id="mode-banner">📍 Click map to place interest — ESC to cancel</div>
+    <div id="mode-banner">📍 Click the map to place an interest box — ESC to cancel</div>
     <div id="base-toggle">
       <button class="btn btn-sm" onclick="toggleBasemap()" id="basemap-btn">🗺 Street</button>
     </div>
@@ -371,7 +371,10 @@ td:first-child{font-family:'IBM Plex Sans',sans-serif;}
     </div>
     <div class="fg">
       <label class="fl">Legal Description</label>
-      <input type="text" class="fi" id="f-desc" placeholder="e.g. Sec 14, Blk 30, T&P Survey, Midland Co.">
+      <input type="text" class="fi" id="f-desc"
+        placeholder="e.g. NW/4 Sec 25, Blk B, CCSD&RGNG Survey, Upton Co."
+        oninput="onDescInput(this.value)">
+      <div id="desc-parse-result" style="margin-top:5px;font-size:0.67rem;font-family:'IBM Plex Mono',monospace;display:none;padding:4px 8px;border-radius:4px;"></div>
     </div>
     <div class="fg">
       <label class="fl">Notes</label>
@@ -393,6 +396,11 @@ let selEntityId = null;
 let placing = false;
 let editId = null;
 let pendingLL = null;
+let pendingBounds = null;
+
+// ── Rectangle draw state ──
+let drawStart = null;
+let drawRect  = null;
 let tableOpen = true;
 let useSatellite = true;
 
@@ -466,11 +474,60 @@ const markerGroup = L.layerGroup().addTo(map);
 map.on('mousemove', e=>{
   document.getElementById('coords-bar').innerHTML =
     `LAT ${e.latlng.lat.toFixed(5)} &nbsp; LON ${e.latlng.lng.toFixed(5)}`;
+
+  // Live-update the preview rectangle while dragging
+  if(placing && drawStart){
+    const bounds = L.latLngBounds(drawStart, e.latlng);
+    if(drawRect) drawRect.setBounds(bounds);
+  }
 });
 
-map.on('click', e=>{
+// ── mousedown: start drawing ──
+map.on('mousedown', e=>{
   if(!placing) return;
-  pendingLL = e.latlng;
+  map.dragging.disable();
+  drawStart = e.latlng;
+
+  // Preview rectangle
+  drawRect = L.rectangle([e.latlng, e.latlng], {
+    color:'#F59E0B', weight:2, dashArray:'6 3',
+    fill:true, fillColor:'#F59E0B', fillOpacity:0.12, interactive:false
+  }).addTo(map);
+});
+
+// ── mouseup: place a correctly-sized tract rectangle centered on click ──
+map.on('mouseup', e=>{
+  if(!placing || !drawStart) return;
+  map.dragging.enable();
+
+  const sw = L.latLngBounds(drawStart, e.latlng).getSouthWest();
+  const ne = L.latLngBounds(drawStart, e.latlng).getNorthEast();
+  const wasDrag = Math.abs(ne.lat - sw.lat) > 0.001 && Math.abs(ne.lng - sw.lng) > 0.001;
+
+  if(wasDrag){
+    // User explicitly dragged — use their box
+    pendingBounds = [[sw.lat, sw.lng],[ne.lat, ne.lng]];
+    pendingLL = { lat:(sw.lat+ne.lat)/2, lng:(sw.lng+ne.lng)/2 };
+  } else {
+    // Single click — place a default quarter-section box centered on click
+    // (will be resized automatically when user enters legal description)
+    const clat = drawStart.lat, clng = drawStart.lng;
+    const halfLat = SEC_LAT / 4;  // quarter section height
+    const halfLng = SEC_LNG / 4;  // quarter section width
+    pendingBounds = [[clat - halfLat, clng - halfLng],[clat + halfLat, clng + halfLng]];
+    pendingLL = { lat: clat, lng: clng };
+  }
+
+  drawStart = null;
+  if(drawRect){ map.removeLayer(drawRect); drawRect = null; }
+
+  // Show placeholder rect while modal is open
+  _previewRect = L.rectangle(pendingBounds, {
+    color:'#F59E0B', weight:2, dashArray:'5 3',
+    fill:true, fillColor:'#F59E0B', fillOpacity:0.12
+  }).addTo(map);
+  map.fitBounds(pendingBounds, {padding:[80,80], maxZoom:15, animate:false});
+
   openModal(null);
 });
 
@@ -583,7 +640,16 @@ function openModal(id){
 
 function cancelModal(){
   document.getElementById('overlay').classList.add('hide');
-  pendingLL = null; editId = null;
+  document.getElementById('desc-parse-result').style.display='none';
+  if(_previewRect){ map.removeLayer(_previewRect); _previewRect = null; }
+  _parsedBoundsFromDesc = null;
+  _parsedCountyFromDesc = null;
+  pendingLL = null;
+  pendingBounds = null;
+  editId = null;
+  if(drawRect){ map.removeLayer(drawRect); drawRect = null; }
+  drawStart = null;
+  map.dragging.enable();
 }
 
 function saveInterest(){
@@ -595,18 +661,336 @@ function saveInterest(){
   const notes    = document.getElementById('f-notes').value.trim();
   if(!entityId){ alert('Please select an entity.'); return; }
 
+  // Clean up preview rect
+  if(_previewRect){ map.removeLayer(_previewRect); _previewRect = null; }
+
   if(editId!==null){
     const i = interests.find(x=>x.id===editId);
-    Object.assign(i,{entityId,type,pct,date,desc,notes});
+    // Re-parse bounds if desc changed
+    const parsed = parseLegalToBounds(desc, i.county);
+    const bounds = parsed ? parsed.bounds : i.bounds || null;
+    const county = parsed ? parsed.county : i.county;
+    Object.assign(i,{entityId,type,pct,date,desc,notes,bounds,county});
+    // Update lat/lng to center of bounds if available
+    if(bounds){ i.lat=(bounds[0][0]+bounds[1][0])/2; i.lng=(bounds[0][1]+bounds[1][1])/2; }
   } else {
-    const county = getCounty(pendingLL);
+    const bounds  = _parsedBoundsFromDesc || pendingBounds || null;
+    const county  = _parsedCountyFromDesc || (pendingLL ? getCounty(pendingLL) : 'Unknown');
+    const lat = bounds ? (bounds[0][0]+bounds[1][0])/2 : (pendingLL?.lat||0);
+    const lng = bounds ? (bounds[0][1]+bounds[1][1])/2 : (pendingLL?.lng||0);
     interests.push({
-      id:'i'+Date.now(), entityId, type, pct, date, desc, notes, county,
-      lat:pendingLL.lat, lng:pendingLL.lng
+      id:'i'+Date.now(), entityId, type, pct, date, desc, notes,
+      county, lat, lng, bounds
     });
   }
+  _parsedBoundsFromDesc = null;
+  _parsedCountyFromDesc = null;
   cancelModal();
   renderAll();
+}
+
+// Standard Texas section dimensions in decimal degrees
+const SEC_LAT = 0.01453;  // ~1 mile N/S
+const SEC_LNG = 0.01750;  // ~1 mile E/W
+
+// Subdivision → [latFraction, lngFraction] of a full section
+const SUBDIV_SIZE = {
+  'all':   [1,    1   ],
+  'n/2':   [0.5,  1   ], 's/2':  [0.5,  1   ],
+  'e/2':   [1,    0.5 ], 'w/2':  [1,    0.5 ],
+  'ne/4':  [0.5,  0.5 ], 'nw/4': [0.5,  0.5 ],
+  'se/4':  [0.5,  0.5 ], 'sw/4': [0.5,  0.5 ],
+  'ne/4 ne/4': [0.25, 0.25], 'nw/4 ne/4': [0.25, 0.25],
+  'se/4 ne/4': [0.25, 0.25], 'sw/4 ne/4': [0.25, 0.25],
+  'ne/4 nw/4': [0.25, 0.25], 'nw/4 nw/4': [0.25, 0.25],
+  'se/4 nw/4': [0.25, 0.25], 'sw/4 nw/4': [0.25, 0.25],
+  'ne/4 se/4': [0.25, 0.25], 'nw/4 se/4': [0.25, 0.25],
+  'se/4 se/4': [0.25, 0.25], 'sw/4 se/4': [0.25, 0.25],
+  'ne/4 sw/4': [0.25, 0.25], 'nw/4 sw/4': [0.25, 0.25],
+  'se/4 sw/4': [0.25, 0.25], 'sw/4 sw/4': [0.25, 0.25],
+};
+
+function getSubdivSize(text){
+  const t = text.toLowerCase();
+  const keys = Object.keys(SUBDIV_SIZE).sort((a,b)=>b.length-a.length);
+  for(const k of keys){
+    if(t.includes(k)) return SUBDIV_SIZE[k];
+  }
+  return [0.5, 0.5]; // default: quarter section
+}
+
+// ===== LEGAL DESCRIPTION PARSER =====
+// Parses Texas survey legal descriptions and returns [[s,w],[n,e]] bounds.
+// Covers the major surveys in Midland, Glasscock, Upton, and Reagan counties.
+//
+// Supported formats:
+//   NW/4 Sec 25, Blk B, CCSD&RGNG Survey, Upton Co.
+//   S/2 Section 14, Block 30, T&P Survey, Midland County
+//   All of Section 7, Blk C-13, PSL Survey, Glasscock Co.
+//   SW/4 NE/4 Sec 3, Blk 33, GC&SF Survey, Reagan Co.
+
+// Survey grid anchors: {surveyKey: {origin: [lat,lng], secLat, secLng, layout}}
+// origin = SW corner of Section 1 (or lowest-numbered section in grid)
+// secLat = degrees lat per section, secLng = degrees lng per section
+// layout: function(secNum) => [row, col] offsets from origin
+const SURVEY_GRIDS = {
+  // ── UPTON COUNTY ──────────────────────────────────────────────────────
+  // CCSD&RGNG (C.C.S.D. & R.G.N.G. Ry. Co.) Block B, Upton Co.
+  // Anchored from known deed record positions in Sections 25,26,27,33
+  'ccsd_b_upton': {
+    secLat: 0.01453, secLng: 0.01750,
+    origin: [31.3820, -102.2450], // SW corner of Sec 1 approximate
+    county: 'Upton',
+    layout(n){ return GRID_STRIP(n, 36, 6); } // ~6 cols, 36 rows
+  },
+  // H&TC (Houston & Texas Central) Survey, Upton Co.
+  'htc_upton': {
+    secLat: 0.01453, secLng: 0.01750,
+    origin: [31.2500, -102.4800],
+    county: 'Upton',
+    layout(n){ return GRID_STRIP(n, 40, 8); }
+  },
+  // T&P (Texas & Pacific) Survey, Upton Co.
+  'tp_upton': {
+    secLat: 0.01453, secLng: 0.01750,
+    origin: [31.0900, -102.5500],
+    county: 'Upton',
+    layout(n){ return GRID_STRIP(n, 50, 10); }
+  },
+
+  // ── MIDLAND COUNTY ────────────────────────────────────────────────────
+  // T&P (Texas & Pacific) Survey, Midland Co. — most common
+  'tp_midland': {
+    secLat: 0.01453, secLng: 0.01750,
+    origin: [31.6600, -102.5000],
+    county: 'Midland',
+    layout(n){ return GRID_STRIP(n, 80, 8); }
+  },
+  // W&NW (Waggoner & Northwest) Survey, Midland Co.
+  'wnw_midland': {
+    secLat: 0.01453, secLng: 0.01750,
+    origin: [31.7200, -102.4500],
+    county: 'Midland',
+    layout(n){ return GRID_STRIP(n, 40, 8); }
+  },
+  // Spraberry (Trend Area) — uses T&P base grid
+  'spraberry_midland': {
+    secLat: 0.01453, secLng: 0.01750,
+    origin: [31.7000, -101.9000],
+    county: 'Midland',
+    layout(n){ return GRID_STRIP(n, 60, 6); }
+  },
+
+  // ── GLASSCOCK COUNTY ──────────────────────────────────────────────────
+  // PSL (Public School Lands) Survey, Glasscock Co.
+  'psl_glasscock': {
+    secLat: 0.01453, secLng: 0.01750,
+    origin: [31.6600, -101.7700],
+    county: 'Glasscock',
+    layout(n){ return GRID_STRIP(n, 50, 10); }
+  },
+  // C-13 Block — Glasscock
+  'c13_glasscock': {
+    secLat: 0.01453, secLng: 0.01750,
+    origin: [31.7000, -101.6500],
+    county: 'Glasscock',
+    layout(n){ return GRID_STRIP(n, 30, 6); }
+  },
+  // Howard-Glasscock (Consolidated) — Glasscock
+  'hgc_glasscock': {
+    secLat: 0.01453, secLng: 0.01750,
+    origin: [31.6800, -101.5500],
+    county: 'Glasscock',
+    layout(n){ return GRID_STRIP(n, 40, 8); }
+  },
+
+  // ── REAGAN COUNTY ─────────────────────────────────────────────────────
+  // GC&SF (Gulf Colorado & Santa Fe) Survey, Reagan Co.
+  'gcsf_reagan': {
+    secLat: 0.01453, secLng: 0.01750,
+    origin: [31.0900, -101.8300],
+    county: 'Reagan',
+    layout(n){ return GRID_STRIP(n, 60, 10); }
+  },
+  // T&P Survey, Reagan Co.
+  'tp_reagan': {
+    secLat: 0.01453, secLng: 0.01750,
+    origin: [31.1200, -101.7500],
+    county: 'Reagan',
+    layout(n){ return GRID_STRIP(n, 50, 10); }
+  },
+};
+
+// Simple east→west, south→north strip layout (common in Texas surveys)
+function GRID_STRIP(n, total, cols){
+  const i = n - 1;
+  const row = Math.floor(i / cols);
+  const col = i % cols;
+  return [row, col];
+}
+
+// Subdivision fractions: returns [[sLatFrac,sLngFrac],[nLatFrac,nLngFrac]] within a section
+const SUBDIVISIONS = {
+  // Halves
+  'n/2':  [[0.5,0],[1,1]], 's/2':  [[0,0],[0.5,1]],
+  'e/2':  [[0,0.5],[1,1]], 'w/2':  [[0,0],[1,0.5]],
+  // Quarters
+  'ne/4': [[0.5,0.5],[1,1]], 'nw/4': [[0.5,0],[1,0.5]],
+  'se/4': [[0,0.5],[0.5,1]], 'sw/4': [[0,0],[0.5,0.5]],
+  // All
+  'all':  [[0,0],[1,1]],
+  // Sixteenths (quarter-quarters)
+  'ne/4 ne/4': [[0.75,0.75],[1,1]],   'nw/4 ne/4': [[0.75,0.5],[1,0.75]],
+  'se/4 ne/4': [[0.5,0.75],[0.75,1]], 'sw/4 ne/4': [[0.5,0.5],[0.75,0.75]],
+  'ne/4 nw/4': [[0.75,0.25],[1,0.5]], 'nw/4 nw/4': [[0.75,0],[1,0.25]],
+  'se/4 nw/4': [[0.5,0.25],[0.75,0.5]],'sw/4 nw/4': [[0.5,0],[0.75,0.25]],
+  'ne/4 se/4': [[0.25,0.75],[0.5,1]], 'nw/4 se/4': [[0.25,0.5],[0.5,0.75]],
+  'se/4 se/4': [[0,0.75],[0.25,1]],   'sw/4 se/4': [[0,0.5],[0.25,0.75]],
+  'ne/4 sw/4': [[0.25,0.25],[0.5,0.5]],'nw/4 sw/4': [[0.25,0],[0.5,0.25]],
+  'se/4 sw/4': [[0,0.25],[0.25,0.5]], 'sw/4 sw/4': [[0,0],[0.25,0.25]],
+};
+
+// Survey name aliases → grid key
+function detectSurveyKey(text, county){
+  const t = text.toLowerCase();
+  const co = county ? county.toLowerCase() : '';
+
+  // County from text if not supplied
+  const inferredCo =
+    /upton/i.test(t) ? 'upton' :
+    /midland/i.test(t) ? 'midland' :
+    /glasscock/i.test(t) ? 'glasscock' :
+    /reagan/i.test(t) ? 'reagan' : co;
+
+  // Block/Survey patterns
+  if (/cc\s*s\s*d|ccsd|rgng|r\.g\.n\.g|c\.c\.s/i.test(t)){
+    return 'ccsd_b_upton'; // only in Upton
+  }
+  if (/h\s*&\s*tc|h\.&\.t|houston.*texas.*central|htc/i.test(t)){
+    return inferredCo === 'upton' ? 'htc_upton' : null;
+  }
+  if (/t\s*&\s*p|t\.&\.p|texas.*pacific/i.test(t)){
+    if (inferredCo === 'midland') return 'tp_midland';
+    if (inferredCo === 'upton')   return 'tp_upton';
+    if (inferredCo === 'reagan')  return 'tp_reagan';
+    return 'tp_midland'; // default
+  }
+  if (/gc\s*&\s*sf|g\.c\.|gulf.*colorado|santa\s*fe/i.test(t)){
+    return 'gcsf_reagan';
+  }
+  if (/psl|public\s*school/i.test(t)){
+    return 'psl_glasscock';
+  }
+  if (/c-?13|blk\s*c-?13/i.test(t)){
+    return 'c13_glasscock';
+  }
+  if (/howard.*glass|hgc/i.test(t)){
+    return 'hgc_glasscock';
+  }
+  if (/spraberry/i.test(t)){
+    return 'spraberry_midland';
+  }
+  if (/w\s*&\s*nw|waggoner/i.test(t)){
+    return 'wnw_midland';
+  }
+  return null;
+}
+
+function parseLegalToBounds(desc, countyHint){
+  if(!desc || desc.length < 5) return null;
+  const t = desc.toLowerCase().trim();
+
+  // Extract section number
+  const secMatch = t.match(/(?:sec(?:tion)?\.?\s*)(\d+)/i);
+  if(!secMatch) return null;
+  const secNum = parseInt(secMatch[1]);
+  if(isNaN(secNum) || secNum < 1) return null;
+
+  // Detect survey grid
+  const surveyKey = detectSurveyKey(t, countyHint);
+  if(!surveyKey || !SURVEY_GRIDS[surveyKey]) return null;
+  const grid = SURVEY_GRIDS[surveyKey];
+
+  // Calc section SW corner
+  const [row, col] = grid.layout(secNum);
+  const secS = grid.origin[0] + row * grid.secLat;
+  const secW = grid.origin[1] + col * grid.secLng; // Note: lng increases east so origin is westernmost
+
+  // Extract subdivision
+  const normalized = t
+    .replace(/section|sec\.?\s*/gi,'')
+    .replace(/block|blk\.?\s*\w+/gi,'')
+    .replace(/survey|co\.|county|texas|upton|midland|glasscock|reagan/gi,'')
+    .replace(/,/g,' ').replace(/\s+/g,' ').trim();
+
+  let subBounds = [[0,0],[1,1]]; // default: whole section
+  // Try longest match first
+  const subKeys = Object.keys(SUBDIVISIONS).sort((a,b)=>b.length-a.length);
+  for(const k of subKeys){
+    if(normalized.includes(k)){
+      subBounds = SUBDIVISIONS[k];
+      break;
+    }
+  }
+
+  const [[sLatF,sLngF],[nLatF,nLngF]] = subBounds;
+  const s = secS + sLatF * grid.secLat;
+  const n = secS + nLatF * grid.secLat;
+  const w = secW + sLngF * grid.secLng;
+  const e = secW + nLngF * grid.secLng;
+
+  return { bounds:[[s,w],[n,e]], county: grid.county };
+}
+
+// ── Live parse feedback in modal ──
+let _parsedBoundsFromDesc = null;
+let _parsedCountyFromDesc = null;
+let _previewRect = null;
+
+function onDescInput(val){
+  const resultEl = document.getElementById('desc-parse-result');
+  if(_previewRect){ map.removeLayer(_previewRect); _previewRect = null; }
+  if(!val.trim()){ resultEl.style.display='none'; _parsedBoundsFromDesc=null; return; }
+
+  // Try full survey grid parse first
+  const countyHint = document.getElementById('f-county-hint')?.value || '';
+  const result = parseLegalToBounds(val, countyHint);
+
+  if(result){
+    // Full match — precise bounds from survey grid
+    _parsedBoundsFromDesc = result.bounds;
+    _parsedCountyFromDesc = result.county;
+    _previewRect = L.rectangle(result.bounds,{
+      color:'#10B981', weight:2.5, dashArray:'4 3',
+      fill:true, fillColor:'#10B981', fillOpacity:0.15
+    }).addTo(map);
+    map.fitBounds(result.bounds,{padding:[80,80],maxZoom:15,animate:true});
+    resultEl.style.cssText='display:block;margin-top:5px;font-size:0.67rem;font-family:IBM Plex Mono,monospace;padding:4px 8px;border-radius:4px;background:rgba(16,185,129,0.12);border:1px solid rgba(16,185,129,0.3);color:#6EE7B7;';
+    resultEl.textContent=`✓ Tract matched — ${result.county} Co.`;
+  } else {
+    // No grid match — resize the placeholder box to the right subdivision size
+    // centered on where the user clicked
+    const clat = pendingLL?.lat || 0;
+    const clng = pendingLL?.lng || 0;
+    if(clat && clng){
+      const [latF, lngF] = getSubdivSize(val);
+      const halfLat = (SEC_LAT * latF) / 2;
+      const halfLng = (SEC_LNG * lngF) / 2;
+      const bounds = [[clat-halfLat, clng-halfLng],[clat+halfLat, clng+halfLng]];
+      _parsedBoundsFromDesc = bounds;
+      _parsedCountyFromDesc = null;
+      _previewRect = L.rectangle(bounds,{
+        color:'#F59E0B', weight:2, dashArray:'5 3',
+        fill:true, fillColor:'#F59E0B', fillOpacity:0.12
+      }).addTo(map);
+      map.fitBounds(bounds,{padding:[80,80],maxZoom:15,animate:true});
+      resultEl.style.cssText='display:block;margin-top:5px;font-size:0.67rem;font-family:IBM Plex Mono,monospace;padding:4px 8px;border-radius:4px;background:rgba(100,116,139,0.1);border:1px solid rgba(100,116,139,0.2);color:var(--text-dim);';
+      resultEl.textContent='ℹ Sized from subdivision — drag corners to refine position.';
+    } else {
+      _parsedBoundsFromDesc = null;
+      resultEl.style.display='none';
+    }
+  }
 }
 
 function getCounty(ll){
@@ -617,7 +1001,7 @@ function getCounty(ll){
   return 'Outside Area';
 }
 
-// ===== MARKERS + TRACT POLYGONS =====
+// ===== TRACT POLYGONS ONLY — no pins =====
 const tractLayer = L.layerGroup().addTo(map);
 
 function renderMarkers(){
@@ -625,6 +1009,8 @@ function renderMarkers(){
   tractLayer.clearLayers();
 
   interests.forEach(i=>{
+    if(!i.bounds) return; // skip anything without a defined tract boundary
+
     const color = getEntityColor(i.entityId);
     const name  = getEntityName(i.entityId);
     const isUnassigned = i.entityId==='UNASSIGNED';
@@ -644,53 +1030,37 @@ function renderMarkers(){
         <button class="btn btn-sm btn-danger" onclick="deleteInterest('${i.id}')">Delete</button>
       </div>`;
 
-    // Draw tract bounding box if bounds defined
-    if(i.bounds){
-      const rect = L.rectangle(i.bounds, {
-        color: color,
-        weight: 2,
-        opacity: isUnassigned ? 0.45 : 0.9,
-        fill: true,
-        fillColor: color,
-        fillOpacity: isUnassigned ? 0.07 : 0.18,
-        dashArray: isUnassigned ? '5 4' : null
-      });
-      rect.bindPopup(popupHTML, {maxWidth:300});
-      tractLayer.addLayer(rect);
+    // Solid colored rectangle
+    const rect = L.rectangle(i.bounds, {
+      color: color,
+      weight: 2.5,
+      opacity: isUnassigned ? 0.4 : 1.0,
+      fill: true,
+      fillColor: color,
+      fillOpacity: isUnassigned ? 0.06 : 0.20,
+      dashArray: isUnassigned ? '6 4' : null
+    });
+    rect.bindPopup(popupHTML, {maxWidth:300});
+    tractLayer.addLayer(rect);
 
-      // Label pin centered on the tract
-      const [[s,w],[n,e]] = i.bounds;
-      const clat = (s+n)/2, clng = (w+e)/2;
-      const icon = L.divIcon({
-        className:'',
-        html:`<div style="
-          background:${color};
-          color:#000;
-          font-family:'IBM Plex Mono',monospace;
-          font-size:9px;
-          font-weight:700;
-          padding:2px 5px;
-          border-radius:3px;
-          white-space:nowrap;
-          box-shadow:0 1px 6px rgba(0,0,0,0.7);
-          opacity:${isUnassigned?0.6:1};
-          letter-spacing:0.04em;
-        ">${i.type}${i.pct>0?' '+i.pct.toFixed(2)+'%':''}</div>`,
-        iconAnchor:[0,0]
-      });
-      const lbl = L.marker([clat, clng], {icon, interactive:false});
-      tractLayer.addLayer(lbl);
-    } else {
-      // Fallback pin for interests without defined bounds
-      const icon = L.divIcon({
-        className:'',
-        html:`<div style="width:18px;height:18px;background:${color};border:2.5px solid rgba(255,255,255,0.85);border-radius:50% 50% 50% 0;transform:rotate(-45deg);box-shadow:0 2px 8px rgba(0,0,0,0.6),0 0 6px ${color}60;${isUnassigned?'opacity:0.5':''}"></div>`,
-        iconAnchor:[9,18], iconSize:[18,18]
-      });
-      const m = L.marker([i.lat,i.lng],{icon});
-      m.bindPopup(popupHTML,{maxWidth:300});
-      markerGroup.addLayer(m);
-    }
+    // Small text label centered on the tract
+    const [[s,w],[n,e]] = i.bounds;
+    const clat = (s+n)/2, clng = (w+e)/2;
+    const lbl = L.divIcon({
+      className:'',
+      html:`<div style="
+        background:${color};color:#000;
+        font-family:'IBM Plex Mono',monospace;
+        font-size:9px;font-weight:700;
+        padding:2px 5px;border-radius:3px;
+        white-space:nowrap;pointer-events:none;
+        box-shadow:0 1px 6px rgba(0,0,0,0.8);
+        opacity:${isUnassigned?0.55:1};
+        letter-spacing:0.03em;
+      ">${i.type}${i.pct>0?' '+i.pct.toFixed(2)+'%':''}</div>`,
+      iconAnchor:[0,6]
+    });
+    tractLayer.addLayer(L.marker([clat,clng],{icon:lbl,interactive:false}));
   });
 }
 
@@ -703,12 +1073,8 @@ function deleteInterest(id){
 }
 function flyTo(id){
   const i = interests.find(x=>x.id===id);
-  if(!i) return;
-  if(i.bounds){
-    map.fitBounds(i.bounds, {padding:[40,40], maxZoom:15, animate:true, duration:0.7});
-  } else {
-    map.flyTo([i.lat,i.lng],14,{duration:0.7});
-  }
+  if(!i || !i.bounds) return;
+  map.fitBounds(i.bounds, {padding:[60,60], maxZoom:15, animate:true, duration:0.6});
 }
 
 // ===== SIDEBAR LIST =====
@@ -719,7 +1085,7 @@ function sortedInterests(){
 function renderInterestList(){
   const el = document.getElementById('i-scroll');
   if(!interests.length){
-    el.innerHTML=`<div class="empty">Add entities then click<br><strong style="color:var(--amber)">📍 Add Interest</strong><br>to place markers on the map.</div>`;
+    el.innerHTML=`<div class="empty">Select an entity, click<br><strong style="color:var(--amber)">📍 Add Interest</strong><br>then drag a box on the map<br>to define the tract boundary.</div>`;
     return;
   }
   el.innerHTML = sortedInterests().map(i=>{
