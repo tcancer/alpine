@@ -413,61 +413,32 @@ const MAPBOX_TOKEN = 'pk.eyJ1Ijoia2VubnlrYW5lYXR4IiwiYSI6ImNtbjd2ZXp1bTA0amYycXB
 
 const layers = {
   street: L.tileLayer(
-    `https://api.mapbox.com/v4/mapbox.dark/{z}/{x}/{y}@2x.png?access_token=${MAPBOX_TOKEN}`,{
+    `https://api.mapbox.com/styles/v1/mapbox/dark-v11/tiles/256/{z}/{x}/{y}@2x?access_token=${MAPBOX_TOKEN}`,{
     attribution:'© <a href="https://www.mapbox.com/">Mapbox</a> © <a href="https://www.openstreetmap.org/">OpenStreetMap</a>',
     maxZoom:22, crossOrigin:true
   }),
   satellite: L.tileLayer(
-    `https://api.mapbox.com/v4/mapbox.satellite/{z}/{x}/{y}@2x.jpg90?access_token=${MAPBOX_TOKEN}`,{
+    `https://api.mapbox.com/styles/v1/mapbox/satellite-streets-v12/tiles/256/{z}/{x}/{y}@2x?access_token=${MAPBOX_TOKEN}`,{
     attribution:'© <a href="https://www.mapbox.com/">Mapbox</a> © <a href="https://www.openstreetmap.org/">OpenStreetMap</a>',
     maxZoom:22, crossOrigin:true
   }),
-  labels: L.tileLayer(
-    `https://api.mapbox.com/v4/mapbox.mapbox-streets-v8/{z}/{x}/{y}@2x.png?access_token=${MAPBOX_TOKEN}`,{
-    attribution:'', maxZoom:22, crossOrigin:true, opacity:0.9
-  })
+  labels: L.tileLayer('',{}) // labels baked into satellite-streets style
 };
 
-// Default: Mapbox satellite-streets
-const satLayer = layers.satellite;
-satLayer.addTo(map);
-layers.labels.addTo(map);
+// Default: satellite (labels + roads baked into satellite-streets-v12)
+layers.satellite.addTo(map);
 
-// Tier 2 fallback: Esri World Imagery + CARTO labels
-const esriFallback = L.tileLayer(
-  'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-  {attribution:'© Esri', maxZoom:19}
-);
-const cartoLabels = L.tileLayer(
-  'https://{s}.basemaps.cartocdn.com/light_only_labels/{z}/{x}/{y}{r}.png',
-  {attribution:'© OpenStreetMap, © CARTO', subdomains:'abcd', maxZoom:19, opacity:0.85}
-);
-
-// Tier 3 fallback: CARTO dark (works in all environments including artifact sandbox)
+// Fallback: CARTO dark if Mapbox tiles fail
 const cartoDark = L.tileLayer(
   'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
   {attribution:'© OpenStreetMap, © CARTO', subdomains:'abcd', maxZoom:20}
 );
-
-let tier = 1;
-let tileErrorCount = 0;
-
-satLayer.on('tileerror', function(){
-  tileErrorCount++;
-  if(tileErrorCount < 3 || tier !== 1) return;
-  tier = 2;
-  map.removeLayer(satLayer);
-  if(map.hasLayer(layers.labels)) map.removeLayer(layers.labels);
-  esriFallback.addTo(map);
-  cartoLabels.addTo(map);
-
-  esriFallback.on('tileerror', function(){
-    if(tier !== 2) return;
-    tier = 3;
-    map.removeLayer(esriFallback);
-    if(map.hasLayer(cartoLabels)) map.removeLayer(cartoLabels);
-    cartoDark.addTo(map);
-  });
+let fallbackActive = false;
+layers.satellite.on('tileerror', ()=>{
+  if(fallbackActive) return;
+  fallbackActive = true;
+  map.removeLayer(layers.satellite);
+  cartoDark.addTo(map);
 });
 
 // Draw county polygons
@@ -803,11 +774,9 @@ function toggleBasemap(){
   if(useSatellite){
     map.removeLayer(layers.street);
     layers.satellite.addTo(map);
-    layers.labels.addTo(map);
     document.getElementById('basemap-btn').textContent='🗺 Street';
   } else {
     map.removeLayer(layers.satellite);
-    if(map.hasLayer(layers.labels)) map.removeLayer(layers.labels);
     layers.street.addTo(map);
     document.getElementById('basemap-btn').textContent='🛰 Satellite';
   }
