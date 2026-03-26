@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Oil Interest Map — Permian Basin</title>
+<title>Alpine Permian Basin Interest Map</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
@@ -261,6 +261,16 @@ td:first-child{font-family:'IBM Plex Sans',sans-serif;}
 ::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px;}
 ::-webkit-scrollbar-thumb:hover{background:#2D4A7A;}
 
+/* UNASSIGNED TRACT GLOW */
+.unassigned-tract{
+  filter:drop-shadow(0 0 4px rgba(34,211,238,0.5));
+  animation:tractPulse 3s ease-in-out infinite;
+}
+@keyframes tractPulse{
+  0%,100%{filter:drop-shadow(0 0 3px rgba(34,211,238,0.3));}
+  50%{filter:drop-shadow(0 0 8px rgba(34,211,238,0.6));}
+}
+
 /* EDIT HANDLES */
 .edit-handle{
   width:12px!important;height:12px!important;
@@ -308,7 +318,7 @@ td:first-child{font-family:'IBM Plex Sans',sans-serif;}
   <div class="h-left">
     <div class="h-logo">⬡</div>
     <div>
-      <div class="h-title">Permian Basin Interest Map</div>
+      <div class="h-title">Alpine Permian Basin Interest Map</div>
       <div class="h-sub">Midland · Glasscock · Upton · Reagan Counties</div>
     </div>
   </div>
@@ -1163,7 +1173,7 @@ function buildPopupHTML(i){
 
   return `
     <div class="p-title" style="color:${color}">${displayName}</div>
-    ${isUnassigned?'<div style="background:#92400E;color:#FCD34D;padding:3px 8px;border-radius:3px;font-size:0.68rem;margin-bottom:8px">⚠ UNASSIGNED — Edit to link to an entity</div>':''}
+    ${isUnassigned?'<div style="background:rgba(34,211,238,0.12);border:1px solid rgba(34,211,238,0.4);color:#22D3EE;padding:3px 8px;border-radius:3px;font-size:0.68rem;margin-bottom:8px">⚠ UNASSIGNED — Edit to link to an entity</div>':''}
     <div class="p-row"><span class="p-lbl">Type</span><span class="p-val"><span class="badge ${i.type}">${i.type}</span></span></div>
     ${i.pct>0?`<div class="p-row"><span class="p-lbl">Interest</span><span class="p-val">${i.pct.toFixed(4)}%</span></div>`:''}
     <div class="p-row"><span class="p-lbl">County</span><span class="p-val">${i.county}</span></div>
@@ -1197,12 +1207,13 @@ function renderMarkers(){
     // Solid colored rectangle
     const rect = L.rectangle(i.bounds, {
       color: isEditing ? '#FCD34D' : color,
-      weight: isEditing ? 3 : 2,
-      opacity: isUnassigned ? 0.4 : 1.0,
+      weight: isEditing ? 3 : (isUnassigned ? 2.5 : 2),
+      opacity: isUnassigned ? 0.7 : 1.0,
       fill: true,
       fillColor: isEditing ? '#FCD34D' : color,
-      fillOpacity: isEditing ? 0.08 : (isUnassigned ? 0.06 : 0.18),
-      dashArray: isEditing ? '6 3' : (isUnassigned ? '6 4' : null)
+      fillOpacity: isEditing ? 0.08 : (isUnassigned ? 0.12 : 0.18),
+      dashArray: isEditing ? '6 3' : (isUnassigned ? '8 5 2 5' : null),
+      className: isUnassigned ? 'unassigned-tract' : ''
     });
     rect._interestId = i.id;
     rect.bindPopup(()=> buildPopupHTML(i), {maxWidth:320});
@@ -1710,8 +1721,8 @@ function importDocs(){
   else alert('Document interests already loaded.');
 }
 
-function getEntityColor(id){ 
-  if(id==='UNASSIGNED') return '#94A3B8';
+function getEntityColor(id){
+  if(id==='UNASSIGNED') return '#22D3EE';
   const e=entities.find(x=>x.id===id); return e?e.color:'#64748B'; 
 }
 function getEntityName(id){
