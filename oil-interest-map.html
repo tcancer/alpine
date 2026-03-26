@@ -1,0 +1,1017 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Oil Interest Map — Permian Basin</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
+<style>
+:root {
+  --bg: #09101F;
+  --surface: #0F1829;
+  --surface2: #172035;
+  --border: #1E2D4A;
+  --amber: #F59E0B;
+  --amber-dim: #92400E;
+  --amber-glow: rgba(245,158,11,0.15);
+  --text: #CBD5E1;
+  --text-dim: #64748B;
+  --text-bright: #F1F5F9;
+  --green: #10B981;
+  --red: #EF4444;
+  --blue: #60A5FA;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+html,body{height:100%;overflow:hidden;}
+body{font-family:'IBM Plex Sans',sans-serif;background:var(--bg);color:var(--text);display:flex;flex-direction:column;}
+
+/* HEADER */
+header{
+  background:var(--surface);
+  border-bottom:1px solid var(--amber);
+  padding:9px 18px;
+  display:flex;align-items:center;justify-content:space-between;
+  flex-shrink:0;
+  box-shadow:0 2px 20px rgba(245,158,11,0.08);
+}
+.h-left{display:flex;align-items:center;gap:14px;}
+.h-logo{
+  width:32px;height:32px;
+  background:var(--amber);
+  border-radius:6px;
+  display:flex;align-items:center;justify-content:center;
+  font-size:1rem;
+}
+.h-title{
+  font-family:'IBM Plex Mono',monospace;
+  font-size:0.78rem;font-weight:600;
+  letter-spacing:0.12em;text-transform:uppercase;
+  color:var(--amber);
+}
+.h-sub{font-size:0.68rem;color:var(--text-dim);margin-top:1px;}
+.h-actions{display:flex;gap:7px;align-items:center;}
+
+/* BUTTONS */
+.btn{
+  padding:6px 13px;border-radius:5px;
+  border:1px solid var(--border);
+  font-size:0.72rem;font-family:'IBM Plex Sans',sans-serif;
+  cursor:pointer;background:var(--surface2);color:var(--text);
+  transition:all 0.15s;white-space:nowrap;
+}
+.btn:hover{border-color:var(--amber);color:var(--amber);}
+.btn-primary{background:var(--amber);border-color:var(--amber);color:#000;font-weight:600;}
+.btn-primary:hover{background:#FCD34D;border-color:#FCD34D;color:#000;}
+.btn-danger{border-color:transparent;color:var(--text-dim);}
+.btn-danger:hover{border-color:var(--red);color:var(--red);background:rgba(239,68,68,0.08);}
+.btn-sm{padding:4px 9px;font-size:0.68rem;}
+.btn-active{background:var(--amber-glow);border-color:var(--amber);color:var(--amber);}
+
+/* MAIN LAYOUT */
+#main{display:flex;flex:1;overflow:hidden;}
+
+/* SIDEBAR */
+#sidebar{
+  width:270px;flex-shrink:0;
+  background:var(--surface);
+  border-right:1px solid var(--border);
+  display:flex;flex-direction:column;
+  overflow:hidden;
+}
+.sb-section{border-bottom:1px solid var(--border);padding:13px;}
+.sb-section-hd{
+  font-family:'IBM Plex Mono',monospace;
+  font-size:0.6rem;font-weight:600;
+  letter-spacing:0.16em;text-transform:uppercase;
+  color:var(--amber);
+  display:flex;align-items:center;justify-content:space-between;
+  margin-bottom:10px;
+}
+.sb-count{
+  background:var(--surface2);border:1px solid var(--border);
+  border-radius:10px;padding:1px 7px;
+  font-size:0.62rem;color:var(--text-dim);
+}
+
+/* ENTITY LIST */
+.entity-list{display:flex;flex-direction:column;gap:5px;max-height:175px;overflow-y:auto;}
+.entity-item{
+  display:flex;align-items:center;gap:8px;
+  padding:7px 9px;background:var(--surface2);
+  border-radius:5px;border:1px solid var(--border);
+  cursor:pointer;transition:all 0.15s;
+}
+.entity-item:hover{border-color:rgba(245,158,11,0.4);}
+.entity-item.active{border-color:var(--amber);background:var(--amber-glow);}
+.e-dot{width:11px;height:11px;border-radius:50%;flex-shrink:0;box-shadow:0 0 6px currentColor;}
+.e-name{font-size:0.78rem;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.e-cnt{font-family:'IBM Plex Mono',monospace;font-size:0.65rem;color:var(--text-dim);}
+.e-del{background:none;border:none;color:var(--text-dim);cursor:pointer;padding:0 2px;font-size:0.7rem;line-height:1;transition:color 0.1s;}
+.e-del:hover{color:var(--red);}
+
+.add-row{display:flex;gap:6px;margin-top:9px;}
+.inp{
+  flex:1;background:var(--surface2);border:1px solid var(--border);
+  border-radius:5px;padding:6px 9px;color:var(--text-bright);
+  font-size:0.78rem;font-family:'IBM Plex Sans',sans-serif;outline:none;
+  transition:border-color 0.15s;
+}
+.inp:focus{border-color:var(--amber);}
+input[type="color"].inp{padding:2px;width:34px;flex:none;cursor:pointer;}
+
+/* INTEREST SIDEBAR LIST */
+.sb-interests-hd{
+  font-family:'IBM Plex Mono',monospace;
+  font-size:0.6rem;font-weight:600;
+  letter-spacing:0.16em;text-transform:uppercase;
+  color:var(--amber);
+  padding:12px 13px 0;
+  display:flex;align-items:center;justify-content:space-between;
+  flex-shrink:0;
+}
+.interest-scroll{flex:1;overflow-y:auto;padding:8px 10px;display:flex;flex-direction:column;gap:4px;}
+.i-item{
+  padding:8px 10px;background:var(--surface2);
+  border-radius:5px;border-left:3px solid #666;
+  cursor:pointer;transition:opacity 0.15s;
+}
+.i-item:hover{opacity:0.75;}
+.i-name{font-size:0.78rem;color:var(--text-bright);font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.i-meta{font-family:'IBM Plex Mono',monospace;font-size:0.65rem;color:var(--text-dim);margin-top:2px;}
+
+/* MAP */
+#map-wrap{flex:1;position:relative;overflow:hidden;}
+#map{width:100%;height:100%;}
+
+.leaflet-popup-content-wrapper{background:var(--surface)!important;border:1px solid var(--amber)!important;border-radius:7px!important;color:var(--text)!important;box-shadow:0 6px 30px rgba(0,0,0,0.6)!important;}
+.leaflet-popup-tip{background:var(--surface)!important;}
+.leaflet-popup-content{font-size:0.8rem;min-width:200px;}
+.p-title{font-family:'IBM Plex Mono',monospace;font-size:0.82rem;color:var(--amber);font-weight:600;margin-bottom:8px;}
+.p-row{display:flex;justify-content:space-between;margin-bottom:4px;gap:16px;}
+.p-lbl{color:var(--text-dim);font-size:0.72rem;}
+.p-val{font-family:'IBM Plex Mono',monospace;font-size:0.72rem;font-weight:600;text-align:right;}
+.p-acts{margin-top:10px;display:flex;gap:6px;}
+
+/* BADGE */
+.badge{
+  display:inline-block;padding:2px 7px;border-radius:3px;
+  font-size:0.62rem;font-weight:600;letter-spacing:0.05em;
+  font-family:'IBM Plex Mono',monospace;
+}
+.WI{background:rgba(96,165,250,0.15);color:#93C5FD;border:1px solid rgba(96,165,250,0.25);}
+.RI{background:rgba(16,185,129,0.15);color:#6EE7B7;border:1px solid rgba(16,185,129,0.25);}
+.ORRI{background:rgba(245,158,11,0.15);color:#FCD34D;border:1px solid rgba(245,158,11,0.25);}
+.NPI{background:rgba(239,68,68,0.15);color:#FCA5A5;border:1px solid rgba(239,68,68,0.25);}
+.OVR{background:rgba(167,139,250,0.15);color:#C4B5FD;border:1px solid rgba(167,139,250,0.25);}
+
+/* MAP OVERLAYS */
+#mode-banner{
+  position:absolute;top:12px;left:50%;transform:translateX(-50%);
+  background:var(--amber);color:#000;
+  font-family:'IBM Plex Mono',monospace;font-size:0.68rem;font-weight:600;
+  letter-spacing:0.12em;text-transform:uppercase;
+  padding:7px 20px;border-radius:20px;
+  z-index:1000;display:none;pointer-events:none;
+  box-shadow:0 2px 16px rgba(245,158,11,0.4);
+}
+#mode-banner.on{display:block;}
+
+#map-legend{
+  position:absolute;bottom:36px;right:12px;
+  background:rgba(9,16,31,0.92);border:1px solid var(--border);
+  border-radius:7px;padding:10px 13px;
+  z-index:999;min-width:150px;max-height:240px;overflow-y:auto;
+  backdrop-filter:blur(6px);
+}
+.leg-title{font-family:'IBM Plex Mono',monospace;font-size:0.58rem;color:var(--amber);text-transform:uppercase;letter-spacing:0.14em;margin-bottom:8px;}
+.leg-item{display:flex;align-items:center;gap:7px;margin-bottom:5px;font-size:0.72rem;}
+.leg-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0;}
+
+#coords-bar{
+  position:absolute;bottom:36px;left:12px;
+  background:rgba(9,16,31,0.85);border:1px solid var(--border);
+  border-radius:5px;padding:5px 11px;
+  font-family:'IBM Plex Mono',monospace;font-size:0.62rem;color:var(--text-dim);
+  z-index:999;pointer-events:none;backdrop-filter:blur(4px);
+}
+
+#base-toggle{
+  position:absolute;top:12px;right:12px;
+  z-index:999;
+}
+
+/* COUNTY LABELS */
+.co-label{background:none!important;border:none!important;font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:600;color:#F59E0B;text-shadow:0 1px 4px rgba(0,0,0,0.9),0 0 8px rgba(0,0,0,0.8);letter-spacing:0.06em;text-transform:uppercase;white-space:nowrap;pointer-events:none;}
+
+/* TABLE PANEL */
+#table-panel{
+  height:195px;background:var(--surface);border-top:1px solid var(--border);
+  display:flex;flex-direction:column;transition:height 0.2s;flex-shrink:0;
+}
+#table-panel.col{height:31px;}
+.tp-hd{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:7px 16px;border-bottom:1px solid var(--border);
+  cursor:pointer;flex-shrink:0;user-select:none;
+}
+.tp-title{font-family:'IBM Plex Mono',monospace;font-size:0.6rem;color:var(--amber);text-transform:uppercase;letter-spacing:0.12em;}
+.tp-toggle{font-size:0.65rem;color:var(--text-dim);}
+.tp-scroll{overflow-y:auto;flex:1;}
+table{width:100%;border-collapse:collapse;font-size:0.72rem;}
+th{background:var(--surface2);padding:5px 12px;text-align:left;font-family:'IBM Plex Mono',monospace;font-size:0.6rem;letter-spacing:0.1em;color:var(--text-dim);text-transform:uppercase;position:sticky;top:0;white-space:nowrap;}
+td{padding:5px 12px;border-bottom:1px solid var(--border);font-family:'IBM Plex Mono',monospace;white-space:nowrap;}
+tr:hover td{background:var(--surface2);cursor:pointer;}
+td:first-child{font-family:'IBM Plex Sans',sans-serif;}
+
+/* MODAL */
+.overlay{position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:2000;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(3px);}
+.overlay.hide{display:none;}
+.modal{
+  background:var(--surface);border:1px solid var(--amber);
+  border-radius:9px;padding:26px;width:440px;max-width:93vw;
+  box-shadow:0 20px 60px rgba(0,0,0,0.7),0 0 0 1px rgba(245,158,11,0.1);
+}
+.m-title{font-family:'IBM Plex Mono',monospace;font-size:0.78rem;font-weight:600;color:var(--amber);letter-spacing:0.12em;text-transform:uppercase;margin-bottom:20px;}
+.fg{margin-bottom:14px;}
+.fl{display:block;font-size:0.66rem;color:var(--text-dim);letter-spacing:0.1em;text-transform:uppercase;margin-bottom:5px;}
+.fi,.fs{
+  width:100%;background:var(--surface2);border:1px solid var(--border);
+  border-radius:5px;padding:8px 11px;color:var(--text-bright);
+  font-size:0.8rem;font-family:'IBM Plex Sans',sans-serif;outline:none;transition:border-color 0.15s;
+}
+.fi:focus,.fs:focus{border-color:var(--amber);}
+.fs option{background:var(--surface);}
+.f-row{display:flex;gap:12px;}
+.f-row .fg{flex:1;}
+.m-acts{display:flex;gap:10px;justify-content:flex-end;margin-top:22px;}
+
+/* EMPTY */
+.empty{text-align:center;padding:20px 12px;color:var(--text-dim);font-size:0.75rem;line-height:1.6;}
+
+/* SCROLLBAR */
+::-webkit-scrollbar{width:4px;}
+::-webkit-scrollbar-track{background:transparent;}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px;}
+::-webkit-scrollbar-thumb:hover{background:#2D4A7A;}
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<header>
+  <div class="h-left">
+    <div class="h-logo">⬡</div>
+    <div>
+      <div class="h-title">Permian Basin Interest Map</div>
+      <div class="h-sub">Midland · Glasscock · Upton · Reagan Counties</div>
+    </div>
+  </div>
+  <div class="h-actions">
+    <button class="btn btn-sm" id="add-mode-btn" onclick="toggleMode()">📍 Add Interest</button>
+    <button class="btn btn-sm" onclick="importDocs()" title="Load interests extracted from uploaded deed records">📄 Import Docs</button>
+    <button class="btn btn-sm" onclick="exportCSV()">↓ Export CSV</button>
+    <button class="btn btn-sm btn-danger" onclick="clearAll()">✕ Clear Interests</button>
+  </div>
+</header>
+
+<div id="main">
+  <!-- SIDEBAR -->
+  <div id="sidebar">
+    <div class="sb-section">
+      <div class="sb-section-hd">
+        Entities
+        <span class="sb-count" id="e-cnt">0</span>
+      </div>
+      <div class="entity-list" id="entity-list">
+        <div class="empty">No entities yet.<br>Add one below to begin.</div>
+      </div>
+      <div class="add-row">
+        <input type="text" class="inp" id="e-name" placeholder="Entity name" autocomplete="off" />
+        <input type="color" class="inp" id="e-color" value="#F59E0B" />
+        <button class="btn btn-sm btn-primary" onclick="addEntity()">+ Add</button>
+      </div>
+    </div>
+
+    <div class="sb-interests-hd">
+      Interests
+      <span class="sb-count" id="i-cnt">0</span>
+    </div>
+    <div class="interest-scroll" id="i-scroll">
+      <div class="empty">Add entities then click<br><strong style="color:var(--amber)">📍 Add Interest</strong><br>to place markers on the map.</div>
+    </div>
+  </div>
+
+  <!-- MAP -->
+  <div id="map-wrap">
+    <div id="map"></div>
+    <div id="mode-banner">📍 Click map to place interest — ESC to cancel</div>
+    <div id="base-toggle">
+      <button class="btn btn-sm" onclick="toggleBasemap()" id="basemap-btn">🗺 Street</button>
+    </div>
+    <div id="map-legend">
+      <div class="leg-title">Legend</div>
+      <div id="leg-items"><div style="font-size:0.68rem;color:var(--text-dim)">No entities</div></div>
+    </div>
+    <div id="coords-bar">LAT — &nbsp; LON —</div>
+  </div>
+</div>
+
+<!-- TABLE -->
+<div id="table-panel">
+  <div class="tp-hd" onclick="toggleTable()">
+    <span class="tp-title">▴ Interest Register <span id="tp-cnt" style="color:var(--text-dim)">(0 records)</span></span>
+    <span class="tp-toggle" id="tp-tog">▴ collapse</span>
+  </div>
+  <div class="tp-scroll">
+    <table>
+      <thead>
+        <tr>
+          <th>Entity</th><th>Type</th><th>%</th><th>County</th><th>Description / Legal</th><th>Notes</th><th>Coords</th><th></th>
+        </tr>
+      </thead>
+      <tbody id="tbl-body"></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- MODAL -->
+<div class="overlay hide" id="overlay">
+  <div class="modal">
+    <div class="m-title" id="m-title">Add Oil Interest</div>
+    <div class="fg">
+      <label class="fl">Entity</label>
+      <select class="fs" id="f-entity"></select>
+    </div>
+    <div class="f-row">
+      <div class="fg">
+        <label class="fl">Interest Type</label>
+        <select class="fs" id="f-type">
+          <option value="WI">Working Interest (WI)</option>
+          <option value="RI">Royalty Interest (RI)</option>
+          <option value="ORRI">Override Royalty (ORRI)</option>
+          <option value="NPI">Net Profits Interest (NPI)</option>
+          <option value="OVR">Overriding Interest (OVR)</option>
+        </select>
+      </div>
+      <div class="fg">
+        <label class="fl">Percentage (%)</label>
+        <input type="number" class="fi" id="f-pct" min="0" max="100" step="0.0001" placeholder="e.g. 12.5000">
+      </div>
+    </div>
+    <div class="fg">
+      <label class="fl">Legal Description</label>
+      <input type="text" class="fi" id="f-desc" placeholder="e.g. Sec 14, Blk 30, T&P Survey, Midland Co.">
+    </div>
+    <div class="fg">
+      <label class="fl">Notes</label>
+      <input type="text" class="fi" id="f-notes" placeholder="Optional notes (lease name, operator, etc.)">
+    </div>
+    <div class="m-acts">
+      <button class="btn" onclick="cancelModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveInterest()">Save Interest</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+// ===== STATE =====
+let entities = [];
+let interests = [];
+let selEntityId = null;
+let placing = false;
+let editId = null;
+let pendingLL = null;
+let tableOpen = true;
+let useSatellite = true;
+
+const PRESET_COLORS = ['#F59E0B','#3B82F6','#10B981','#EF4444','#A855F7','#EC4899','#F97316','#06B6D4','#84CC16','#14B8A6'];
+
+// ===== COUNTIES (approximate bounds — Permian Basin) =====
+const COUNTIES = [
+  { name:'Midland',   bounds:[[31.6509,-102.5251],[32.0869,-101.7790]], ctr:[31.8689,-102.1521] },
+  { name:'Glasscock', bounds:[[31.6509,-101.7790],[32.0869,-101.1985]], ctr:[31.8689,-101.4888] },
+  { name:'Upton',     bounds:[[31.0822,-102.5868],[31.6509,-101.8429]], ctr:[31.3666,-102.2149] },
+  { name:'Reagan',    bounds:[[31.0822,-101.8429],[31.6509,-101.2748]], ctr:[31.3666,-101.5589] },
+];
+
+// ===== MAP =====
+const map = L.map('map',{center:[31.58,-101.88],zoom:9,zoomControl:true});
+
+const MAPBOX_TOKEN = 'pk.eyJ1Ijoia2VubnlrYW5lYXR4IiwiYSI6ImNtbjd2ZXp1bTA0amYycXB5bWpibm1vNjYifQ.fvBvQ_QkZJpsUsJOG9DZsw';
+
+const layers = {
+  street: L.tileLayer(
+    `https://api.mapbox.com/v4/mapbox.dark/{z}/{x}/{y}@2x.png?access_token=${MAPBOX_TOKEN}`,{
+    attribution:'© <a href="https://www.mapbox.com/">Mapbox</a> © <a href="https://www.openstreetmap.org/">OpenStreetMap</a>',
+    maxZoom:22, crossOrigin:true
+  }),
+  satellite: L.tileLayer(
+    `https://api.mapbox.com/v4/mapbox.satellite/{z}/{x}/{y}@2x.jpg90?access_token=${MAPBOX_TOKEN}`,{
+    attribution:'© <a href="https://www.mapbox.com/">Mapbox</a> © <a href="https://www.openstreetmap.org/">OpenStreetMap</a>',
+    maxZoom:22, crossOrigin:true
+  }),
+  labels: L.tileLayer(
+    `https://api.mapbox.com/v4/mapbox.mapbox-streets-v8/{z}/{x}/{y}@2x.png?access_token=${MAPBOX_TOKEN}`,{
+    attribution:'', maxZoom:22, crossOrigin:true, opacity:0.9
+  })
+};
+
+// Default: Mapbox satellite-streets
+const satLayer = layers.satellite;
+satLayer.addTo(map);
+layers.labels.addTo(map);
+
+// Tier 2 fallback: Esri World Imagery + CARTO labels
+const esriFallback = L.tileLayer(
+  'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+  {attribution:'© Esri', maxZoom:19}
+);
+const cartoLabels = L.tileLayer(
+  'https://{s}.basemaps.cartocdn.com/light_only_labels/{z}/{x}/{y}{r}.png',
+  {attribution:'© OpenStreetMap, © CARTO', subdomains:'abcd', maxZoom:19, opacity:0.85}
+);
+
+// Tier 3 fallback: CARTO dark (works in all environments including artifact sandbox)
+const cartoDark = L.tileLayer(
+  'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+  {attribution:'© OpenStreetMap, © CARTO', subdomains:'abcd', maxZoom:20}
+);
+
+let tier = 1;
+let tileErrorCount = 0;
+
+satLayer.on('tileerror', function(){
+  tileErrorCount++;
+  if(tileErrorCount < 3 || tier !== 1) return;
+  tier = 2;
+  map.removeLayer(satLayer);
+  if(map.hasLayer(layers.labels)) map.removeLayer(layers.labels);
+  esriFallback.addTo(map);
+  cartoLabels.addTo(map);
+
+  esriFallback.on('tileerror', function(){
+    if(tier !== 2) return;
+    tier = 3;
+    map.removeLayer(esriFallback);
+    if(map.hasLayer(cartoLabels)) map.removeLayer(cartoLabels);
+    cartoDark.addTo(map);
+  });
+});
+
+// Draw county polygons
+const countyFills = {};
+COUNTIES.forEach((c,i) => {
+  const fillColors = ['rgba(245,158,11,0.08)','rgba(245,158,11,0.04)','rgba(245,158,11,0.04)','rgba(245,158,11,0.08)'];
+  const rect = L.rectangle(c.bounds,{
+    color:'#F59E0B', weight:2.5, fill:true,
+    fillColor:fillColors[i], fillOpacity:1, dashArray:'6 3'
+  }).addTo(map);
+  countyFills[c.name] = rect;
+
+  L.marker(c.ctr,{
+    icon:L.divIcon({
+      className:'co-label',
+      html:`<div>${c.name.toUpperCase()} CO.</div>`,
+      iconAnchor:[42,10]
+    }),
+    interactive:false
+  }).addTo(map);
+});
+
+const markerGroup = L.layerGroup().addTo(map);
+
+map.on('mousemove', e=>{
+  document.getElementById('coords-bar').innerHTML =
+    `LAT ${e.latlng.lat.toFixed(5)} &nbsp; LON ${e.latlng.lng.toFixed(5)}`;
+});
+
+map.on('click', e=>{
+  if(!placing) return;
+  pendingLL = e.latlng;
+  openModal(null);
+});
+
+// ===== BASEMAP TOGGLE =====
+function toggleBasemap(){
+  useSatellite = !useSatellite;
+  if(useSatellite){
+    map.removeLayer(layers.street);
+    layers.satellite.addTo(map);
+    document.getElementById('basemap-btn').textContent='🗺 Street';
+  } else {
+    map.removeLayer(layers.satellite);
+    layers.street.addTo(map);
+    document.getElementById('basemap-btn').textContent='🛰 Satellite';
+  }
+}
+
+// ===== ENTITIES =====
+function addEntity(){
+  const nameEl = document.getElementById('e-name');
+  const colorEl = document.getElementById('e-color');
+  const name = nameEl.value.trim();
+  if(!name){ nameEl.focus(); return; }
+
+  const id = 'e'+Date.now();
+  entities.push({id, name, color:colorEl.value});
+  nameEl.value = '';
+  if(!selEntityId) selEntityId = id;
+
+  const next = PRESET_COLORS[entities.length % PRESET_COLORS.length];
+  colorEl.value = next;
+
+  renderEntities(); renderLegend(); renderCounts();
+}
+
+function removeEntity(id){
+  const has = interests.some(i=>i.entityId===id);
+  if(has && !confirm('This entity has interests recorded. Remove anyway?')) return;
+  entities = entities.filter(e=>e.id!==id);
+  interests = interests.filter(i=>i.entityId!==id);
+  if(selEntityId===id) selEntityId = entities[0]?.id||null;
+  renderAll();
+}
+
+function selectEntity(id){ selEntityId=id; renderEntities(); }
+function getEntity(id){ return entities.find(e=>e.id===id); }
+
+function renderEntities(){
+  const el = document.getElementById('entity-list');
+  if(!entities.length){
+    el.innerHTML='<div class="empty">No entities yet.<br>Add one below to begin.</div>';
+    return;
+  }
+  el.innerHTML = entities.map(e=>{
+    const cnt = interests.filter(i=>i.entityId===e.id).length;
+    return `
+      <div class="entity-item ${e.id===selEntityId?'active':''}" onclick="selectEntity('${e.id}')">
+        <div class="e-dot" style="background:${e.color};box-shadow:0 0 5px ${e.color}80"></div>
+        <span class="e-name" title="${e.name}">${e.name}</span>
+        <span class="e-cnt">${cnt}</span>
+        <button class="e-del" onclick="event.stopPropagation();removeEntity('${e.id}')" title="Remove">✕</button>
+      </div>`;
+  }).join('');
+}
+
+function renderLegend(){
+  const el = document.getElementById('leg-items');
+  if(!entities.length){
+    el.innerHTML='<div style="font-size:0.68rem;color:var(--text-dim)">No entities</div>';
+    return;
+  }
+  el.innerHTML = entities.map(e=>`
+    <div class="leg-item">
+      <div class="leg-dot" style="background:${e.color};box-shadow:0 0 4px ${e.color}80"></div>
+      <span>${e.name}</span>
+    </div>`).join('');
+}
+
+// ===== MODAL =====
+function openModal(id){
+  editId = id;
+  const isEdit = id!==null;
+  document.getElementById('m-title').textContent = isEdit ? 'Edit Interest' : 'Add Oil Interest';
+
+  const sel = document.getElementById('f-entity');
+  sel.innerHTML = entities.map(e=>`<option value="${e.id}">${e.name}</option>`).join('');
+
+  if(isEdit){
+    const i = interests.find(x=>x.id===id);
+    sel.value = i.entityId;
+    document.getElementById('f-type').value = i.type;
+    document.getElementById('f-pct').value = i.pct;
+    document.getElementById('f-desc').value = i.desc;
+    document.getElementById('f-notes').value = i.notes;
+  } else {
+    if(selEntityId) sel.value = selEntityId;
+    document.getElementById('f-type').value = 'WI';
+    document.getElementById('f-pct').value = '';
+    document.getElementById('f-desc').value = '';
+    document.getElementById('f-notes').value = '';
+  }
+  document.getElementById('overlay').classList.remove('hide');
+  setTimeout(()=>document.getElementById('f-pct').focus(),50);
+}
+
+function cancelModal(){
+  document.getElementById('overlay').classList.add('hide');
+  pendingLL = null; editId = null;
+}
+
+function saveInterest(){
+  const entityId = document.getElementById('f-entity').value;
+  const type     = document.getElementById('f-type').value;
+  const pct      = parseFloat(document.getElementById('f-pct').value)||0;
+  const desc     = document.getElementById('f-desc').value.trim();
+  const notes    = document.getElementById('f-notes').value.trim();
+  if(!entityId){ alert('Please select an entity.'); return; }
+
+  if(editId!==null){
+    const i = interests.find(x=>x.id===editId);
+    Object.assign(i,{entityId,type,pct,desc,notes});
+  } else {
+    const county = getCounty(pendingLL);
+    interests.push({
+      id:'i'+Date.now(), entityId, type, pct, desc, notes, county,
+      lat:pendingLL.lat, lng:pendingLL.lng
+    });
+  }
+  cancelModal();
+  renderAll();
+}
+
+function getCounty(ll){
+  for(const c of COUNTIES){
+    const [[s,w],[n,e]] = c.bounds;
+    if(ll.lat>=s && ll.lat<=n && ll.lng>=w && ll.lng<=e) return c.name;
+  }
+  return 'Outside Area';
+}
+
+// ===== MARKERS =====
+function renderMarkers(){
+  markerGroup.clearLayers();
+  interests.forEach(i=>{
+    const color = getEntityColor(i.entityId);
+    const name  = getEntityName(i.entityId);
+    const isUnassigned = i.entityId==='UNASSIGNED';
+    const icon = L.divIcon({
+      className:'',
+      html:`<div style="width:20px;height:20px;background:${color};border:2.5px solid rgba(255,255,255,0.9);border-radius:50% 50% 50% 0;transform:rotate(-45deg);box-shadow:0 2px 10px rgba(0,0,0,0.6),0 0 8px ${color}60;${isUnassigned?'opacity:0.6':''}"></div>`,
+      iconAnchor:[10,20], iconSize:[20,20]
+    });
+    const m = L.marker([i.lat,i.lng],{icon});
+    const displayName = i.imported && isUnassigned ? (i.label||'Imported') : name;
+    m.bindPopup(`
+      <div class="p-title" style="color:${color}">${displayName}</div>
+      ${isUnassigned?'<div style="background:#92400E;color:#FCD34D;padding:3px 8px;border-radius:3px;font-size:0.68rem;margin-bottom:8px">⚠ UNASSIGNED — Edit to link to an entity</div>':''}
+      <div class="p-row"><span class="p-lbl">Type</span><span class="p-val"><span class="badge ${i.type}">${i.type}</span></span></div>
+      ${i.pct>0?`<div class="p-row"><span class="p-lbl">Interest</span><span class="p-val">${i.pct.toFixed(4)}%</span></div>`:''}
+      <div class="p-row"><span class="p-lbl">County</span><span class="p-val">${i.county}</span></div>
+      ${i.desc?`<div class="p-row"><span class="p-lbl">Legal</span><span class="p-val" style="max-width:180px;white-space:normal;text-align:right;font-size:0.65rem">${i.desc}</span></div>`:''}
+      ${i.notes?`<div class="p-row"><span class="p-lbl">Notes</span><span class="p-val" style="max-width:180px;white-space:normal;text-align:right;font-size:0.65rem">${i.notes}</span></div>`:''}
+      <div class="p-acts">
+        <button class="btn btn-sm" onclick="editInterest('${i.id}')">Edit</button>
+        <button class="btn btn-sm btn-danger" onclick="deleteInterest('${i.id}')">Delete</button>
+      </div>
+    `,{maxWidth:300});
+    markerGroup.addLayer(m);
+  });
+}
+
+function editInterest(id){ map.closePopup(); openModal(id); }
+function deleteInterest(id){
+  if(!confirm('Delete this interest?')) return;
+  interests = interests.filter(i=>i.id!==id);
+  map.closePopup();
+  renderAll();
+}
+function flyTo(id){
+  const i = interests.find(x=>x.id===id);
+  if(!i) return;
+  map.flyTo([i.lat,i.lng],13,{duration:0.7});
+}
+
+// ===== SIDEBAR LIST =====
+function renderInterestList(){
+  const el = document.getElementById('i-scroll');
+  if(!interests.length){
+    el.innerHTML=`<div class="empty">Add entities then click<br><strong style="color:var(--amber)">📍 Add Interest</strong><br>to place markers on the map.</div>`;
+    return;
+  }
+  el.innerHTML = [...interests].reverse().map(i=>{
+    const color = getEntityColor(i.entityId);
+    const name  = getEntityName(i.entityId);
+    const displayName = i.imported && i.entityId==='UNASSIGNED' ? (i.label||name) : name;
+    return `<div class="i-item" style="border-left-color:${color}" onclick="flyTo('${i.id}')">
+      <div class="i-name">${i.desc||displayName}</div>
+      <div class="i-meta">${displayName} · ${i.type}${i.pct>0?' · '+i.pct.toFixed(4)+'%':''} · ${i.county}</div>
+    </div>`;
+  }).join('');
+}
+
+// ===== TABLE =====
+function renderTable(){
+  const body = document.getElementById('tbl-body');
+  document.getElementById('tp-cnt').textContent=`(${interests.length} record${interests.length!==1?'s':''})`;
+  if(!interests.length){
+    body.innerHTML=`<tr><td colspan="8" style="text-align:center;color:var(--text-dim);padding:18px">No interests recorded yet</td></tr>`;
+    return;
+  }
+  body.innerHTML = interests.map(i=>{
+    const color = getEntityColor(i.entityId);
+    const name  = getEntityName(i.entityId);
+    const displayName = i.imported && i.entityId==='UNASSIGNED' ? (i.label||name) : name;
+    return `<tr onclick="flyTo('${i.id}')">
+      <td><span style="display:inline-flex;align-items:center;gap:6px"><span style="width:8px;height:8px;border-radius:50%;background:${color};box-shadow:0 0 4px ${color}80;display:inline-block"></span>${displayName}</span></td>
+      <td><span class="badge ${i.type}">${i.type}</span></td>
+      <td>${i.pct>0?i.pct.toFixed(4)+'%':'—'}</td>
+      <td>${i.county}</td>
+      <td style="font-family:'IBM Plex Sans',sans-serif;max-width:200px;overflow:hidden;text-overflow:ellipsis">${i.desc||'—'}</td>
+      <td style="font-family:'IBM Plex Sans',sans-serif;max-width:150px;overflow:hidden;text-overflow:ellipsis">${i.notes||'—'}</td>
+      <td>${i.lat.toFixed(4)}, ${i.lng.toFixed(4)}</td>
+      <td>
+        <button class="btn btn-sm" onclick="event.stopPropagation();editInterest('${i.id}')">Edit</button>
+        <button class="btn btn-sm btn-danger" onclick="event.stopPropagation();deleteInterest('${i.id}')">Del</button>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+function toggleTable(){
+  tableOpen=!tableOpen;
+  document.getElementById('table-panel').classList.toggle('col',!tableOpen);
+  document.getElementById('tp-tog').textContent=tableOpen?'▴ collapse':'▾ expand';
+}
+
+// ===== MODE =====
+function toggleMode(){
+  if(!entities.length){ alert('Add at least one entity before placing interests.'); return; }
+  placing = !placing;
+  const btn = document.getElementById('add-mode-btn');
+  const banner = document.getElementById('mode-banner');
+  banner.classList.toggle('on',placing);
+  map.getContainer().style.cursor = placing?'crosshair':'';
+  btn.textContent = placing ? '✕ Cancel Placing' : '📍 Add Interest';
+  btn.classList.toggle('btn-active',placing);
+}
+
+// ===== EXPORT =====
+function exportCSV(){
+  if(!interests.length){ alert('No interests to export.'); return; }
+  const h = ['Entity','Type','Percentage','County','Legal Description','Notes','Latitude','Longitude'];
+  const rows = interests.map(i=>{
+    const e = getEntity(i.entityId);
+    return [`"${e?.name||''}"`,i.type,i.pct,i.county,`"${i.desc||''}"`,`"${i.notes||''}"`,i.lat.toFixed(6),i.lng.toFixed(6)].join(',');
+  });
+  const csv = [h.join(','),...rows].join('\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
+  a.download = 'oil-interests-permian.csv';
+  a.click();
+}
+
+// ===== SAMPLE DATA =====
+function loadSampleData(){
+  if((entities.length||interests.length)&&!confirm('Load sample data? This will clear existing data.')) return;
+  entities=[];interests=[];selEntityId=null;
+
+  const sampleEntities = [
+    {id:'e1',name:'Permian Resources LLC', color:'#F59E0B'},
+    {id:'e2',name:'Pioneer Minerals Inc.', color:'#3B82F6'},
+    {id:'e3',name:'Lone Star Royalties', color:'#10B981'},
+    {id:'e4',name:'Davis Family Trust', color:'#EF4444'},
+  ];
+  entities = sampleEntities;
+  selEntityId = 'e1';
+
+  const sampleInterests = [
+    {id:'i1',entityId:'e1',type:'WI',pct:75.0000,desc:'Sec 15, Blk 30, T&P Survey',notes:'Spindletop #1-H',county:'Midland',lat:31.92,lng:-102.15},
+    {id:'i2',entityId:'e2',type:'WI',pct:25.0000,desc:'Sec 15, Blk 30, T&P Survey',notes:'Non-op WI',county:'Midland',lat:31.92,lng:-102.15},
+    {id:'i3',entityId:'e3',type:'ORRI',pct:3.0000,desc:'Sec 15, Blk 30, T&P Survey',notes:'ORRI carved from e1 WI',county:'Midland',lat:31.92,lng:-102.15},
+    {id:'i4',entityId:'e1',type:'WI',pct:50.0000,desc:'Sec 7, Blk C-13, PSL Survey',notes:'Delaware Basin Unit',county:'Glasscock',lat:31.80,lng:-101.55},
+    {id:'i5',entityId:'e4',type:'RI',pct:25.0000,desc:'Sec 7, Blk C-13, PSL Survey',notes:'Mineral owner royalty',county:'Glasscock',lat:31.80,lng:-101.55},
+    {id:'i6',entityId:'e2',type:'WI',pct:100.0000,desc:'Sec 22, Blk 33, GC&SF Survey',notes:'Operated — Reagan Deep',county:'Reagan',lat:31.35,lng:-101.50},
+    {id:'i7',entityId:'e3',type:'ORRI',pct:2.5000,desc:'Sec 22, Blk 33, GC&SF Survey',notes:'',county:'Reagan',lat:31.35,lng:-101.50},
+    {id:'i8',entityId:'e1',type:'WI',pct:87.5000,desc:'Sec 44, Blk 38, H&TC Survey',notes:'Upton Wolfcamp Play',county:'Upton',lat:31.40,lng:-102.10},
+    {id:'i9',entityId:'e4',type:'RI',pct:18.7500,desc:'Sec 44, Blk 38, H&TC Survey',notes:'1/8th mineral interest',county:'Upton',lat:31.42,lng:-102.12},
+    {id:'i10',entityId:'e2',type:'WI',pct:62.5000,desc:'Sec 3, Blk 55, T&P Survey',notes:'Midland Basin — Spraberry',county:'Midland',lat:31.75,lng:-102.30},
+  ];
+  interests = sampleInterests;
+
+  renderAll();
+  map.fitBounds([[31.0822,-102.5868],[32.0869,-101.1985]],{padding:[30,30]});
+}
+
+// ===== CLEAR =====
+function clearAll(){
+  if(interests.length&&!confirm('Clear all interests? (Entities will be kept)')) return;
+  interests=[];
+  placing=false;
+  document.getElementById('mode-banner').classList.remove('on');
+  map.getContainer().style.cursor='';
+  document.getElementById('add-mode-btn').textContent='📍 Add Interest';
+  document.getElementById('add-mode-btn').classList.remove('btn-active');
+  renderAll();
+}
+
+// ===== RENDER ALL =====
+function renderAll(){
+  renderEntities();
+  renderLegend();
+  renderMarkers();
+  renderInterestList();
+  renderTable();
+  renderCounts();
+}
+function renderCounts(){
+  document.getElementById('e-cnt').textContent = entities.length;
+  document.getElementById('i-cnt').textContent = interests.length;
+}
+
+// ===== KEYBOARD =====
+document.addEventListener('keydown',e=>{
+  if(e.key==='Escape'){
+    if(placing) toggleMode();
+    if(!document.getElementById('overlay').classList.contains('hide')) cancelModal();
+  }
+  if(e.key==='Enter' && document.activeElement===document.getElementById('e-name')) addEntity();
+});
+
+document.getElementById('overlay').addEventListener('click',e=>{
+  if(e.target===document.getElementById('overlay')) cancelModal();
+});
+
+// ===== DOCUMENT-IMPORTED INTERESTS =====
+// Extracted from Upton County deed records uploaded by user.
+// Block "B", C.C.S.D. & R.G.N.G. Ry. Co. Survey, Upton County, TX
+// Approximate centroids for each quarter-section used for map placement.
+// Chain of title: Morgan family OGL (1974) → D.E. Billings Trustee → 
+//   Westland Oil Development Corp → Parker & Parsley → multiple WI owners
+//   HenLan, Inc. holds ORRIs. MCorp/MBank hold liens (Vol 173/Pg 588).
+//
+// NOTE: None of the 24 pre-loaded entities appear by name in these documents.
+// These records represent predecessor/historical title. Assign entities below
+// by changing entityId to match your e01–e24 entity IDs.
+// -----------------------------------------------------------------------
+// Approximate section centroids (Block B, CCSD&RGNG, Upton Co.):
+//   Sec 25 NW/4 ≈ 31.573, -102.075  (Morgan "B" Well #1 area)
+//   Sec 25 NE/4 ≈ 31.573, -102.045  (Morgan "C" Well area)
+//   Sec 25 (all) ≈ 31.570, -102.060  (Original OGL Morgan → Billings)
+//   Sec 26 SE/4 ≈ 31.543, -102.045  (Morgan "E" Well #1 area)
+//   Sec 26 SW/4 ≈ 31.543, -102.075  (Morgan "F" area)
+//   Sec 27 S/2  ≈ 31.555, -102.028
+//   Sec 33      ≈ 31.527, -102.060  (Parker & Parsley Morgan #1 ref well)
+
+const DOC_INTERESTS = [
+  // ── Vol 418/194 & 418/198: Original OGL (Jan 1974) ─────────────────────
+  // Lessor royalty – Morgan family / Frank Council et al.
+  // Lessee: D.E. Billings, Trustee, Midland TX
+  {id:'d01', entityId:'UNASSIGNED', label:'D.E. Billings, Trustee (Lessee)',
+   type:'WI', pct:100.0, county:'Upton',
+   desc:'Secs 25/26/27/33, Blk "B", CCSD&RGNG Survey — OGL Vol 418/194',
+   notes:'OGL dated Jan 14 1974 from W.R. Morgan & Prebble Durham Morgan. Instr #64000.',
+   lat:31.565, lng:-102.060},
+  {id:'d02', entityId:'UNASSIGNED', label:'D.E. Billings, Trustee (Lessee – Sec 27 S/2)',
+   type:'WI', pct:100.0, county:'Upton',
+   desc:'S/2 Sec 27, Blk "B", CCSD&RGNG Survey — OGL Vol 418/198',
+   notes:'OGL dated Jan 11 1974 from Frank Council et al. Instr #64002.',
+   lat:31.555, lng:-102.028},
+
+  // ── Vol 462/172: Westland → Parker & Parsley (Oct 1 1979) ─────────────
+  // NW/4 Sec 25 – below 7,194 ft equiv / above 8,900 ft — Morgan "B" Well #1
+  {id:'d03', entityId:'UNASSIGNED', label:'Westland Oil Dev. Corp. (reserved ORRI)',
+   type:'ORRI', pct:6.25, county:'Upton',
+   desc:'NW/4 Sec 25, Blk "B", CCSD&RGNG Survey — Vol 462/172',
+   notes:'1/16 of 8/8 ORRI reserved by Westland. Converts at payout to 1/8 of 8/8 ORRI or 33-1/3% WI. Morgan "B" Well #1. Instr #74403.',
+   lat:31.573, lng:-102.075},
+  {id:'d04', entityId:'UNASSIGNED', label:'Howard W. Parker (WI — Morgan "B" #1)',
+   type:'WI', pct:16.016, county:'Upton',
+   desc:'NW/4 Sec 25, Blk "B", CCSD&RGNG Survey — Vol 462/172',
+   notes:'11/64 less 1/2 of 3% WI. Operated under Parker & Parsley Inc. Farmout Agmt Dec 13 1978.',
+   lat:31.573, lng:-102.077},
+  {id:'d05', entityId:'UNASSIGNED', label:'Joe M. Parsley (WI — Morgan "B" #1)',
+   type:'WI', pct:16.016, county:'Upton',
+   desc:'NW/4 Sec 25, Blk "B", CCSD&RGNG Survey — Vol 462/172',
+   notes:'11/64 less 1/2 of 3% WI. Co-operator.',
+   lat:31.573, lng:-102.073},
+
+  // ── Vol 462/632: ORRI to HenLan Inc (Nov 21 1979) ─────────────────────
+  {id:'d06', entityId:'UNASSIGNED', label:'HenLan, Inc. (ORRI — NW/4 Sec 25)',
+   type:'ORRI', pct:3.125, county:'Upton',
+   desc:'NW/4 Sec 25, Blk "B", CCSD&RGNG Survey — Vol 462/632',
+   notes:'1/32 of 8/8 ORRI. Converts at payout to 1/32 WI if Westland converts to 1/8 of 8/8. Instr #74685.',
+   lat:31.575, lng:-102.071},
+
+  // ── Vol 462/634: Parker & Parsley → individuals (Morgan "C" — NE/4 Sec 25) ─
+  {id:'d07', entityId:'UNASSIGNED', label:'Howard W. Parker (WI — Morgan "C" #1)',
+   type:'WI', pct:12.50, county:'Upton',
+   desc:'NE/4 Sec 25, Blk "B", CCSD&RGNG Survey — Vol 462/634',
+   notes:'13/64 less 1/2 of 3% of 15/16 WI. Subject to Westland 1/16 ORRI & HenLan 1/32 ORRI. Instr #74686.',
+   lat:31.573, lng:-102.045},
+  {id:'d08', entityId:'UNASSIGNED', label:'Joe M. Parsley (WI — Morgan "C" #1)',
+   type:'WI', pct:12.50, county:'Upton',
+   desc:'NE/4 Sec 25, Blk "B", CCSD&RGNG Survey — Vol 462/634',
+   notes:'13/64 less 1/2 of 3% of 15/16 WI.',
+   lat:31.571, lng:-102.043},
+
+  // ── Vol 463/795: Westland → Parker & Parsley (Jan 22 1980) ───────────
+  // SE/4 Sec 26 – Morgan "E" Well #1
+  {id:'d09', entityId:'UNASSIGNED', label:'Westland Oil Dev. Corp. (ORRI — SE/4 Sec 26)',
+   type:'ORRI', pct:6.25, county:'Upton',
+   desc:'SE/4 Sec 26, Blk "B", CCSD&RGNG Survey — Vol 463/795',
+   notes:'1/16 of 8/8 ORRI reserved by Westland. Converts at payout to 1/8 of 8/8 ORRI or 33-1/3% WI. Morgan "E" Well #1. Instr #75285.',
+   lat:31.543, lng:-102.045},
+  {id:'d10', entityId:'UNASSIGNED', label:'Howard W. Parker (WI — Morgan "E" #1)',
+   type:'WI', pct:16.016, county:'Upton',
+   desc:'SE/4 Sec 26, Blk "B", CCSD&RGNG Survey — Vol 463/795',
+   notes:'Farmout Agmt Dec 13 1978.',
+   lat:31.543, lng:-102.047},
+  {id:'d11', entityId:'UNASSIGNED', label:'Joe M. Parsley (WI — Morgan "E" #1)',
+   type:'WI', pct:16.016, county:'Upton',
+   desc:'SE/4 Sec 26, Blk "B", CCSD&RGNG Survey — Vol 463/795',
+   notes:'',
+   lat:31.543, lng:-102.043},
+
+  // ── Vol 464/3: Parker & Parsley → individuals (SW/4 Sec 26) ──────────
+  {id:'d12', entityId:'UNASSIGNED', label:'Howard W. Parker (WI — SW/4 Sec 26)',
+   type:'WI', pct:12.50, county:'Upton',
+   desc:'SW/4 Sec 26, Blk "B", CCSD&RGNG Survey — Vol 464/3',
+   notes:'5/32 less 1/2 of 3% of 15/16 WI. Subject to Westland ORRI & HenLan ORRI. Effective Dec 21 1979. Instr #75310.',
+   lat:31.543, lng:-102.075},
+  {id:'d13', entityId:'UNASSIGNED', label:'Joe M. Parsley (WI — SW/4 Sec 26)',
+   type:'WI', pct:12.50, county:'Upton',
+   desc:'SW/4 Sec 26, Blk "B", CCSD&RGNG Survey — Vol 464/3',
+   notes:'5/32 less 1/2 of 3% of 15/16 WI.',
+   lat:31.541, lng:-102.073},
+
+  // ── Vol 464/6: ORRI to HenLan Inc (SW/4 Sec 26) ──────────────────────
+  {id:'d14', entityId:'UNASSIGNED', label:'HenLan, Inc. (ORRI — SW/4 Sec 26)',
+   type:'ORRI', pct:3.125, county:'Upton',
+   desc:'SW/4 Sec 26, Blk "B", CCSD&RGNG Survey — Vol 464/6',
+   notes:'1/32 of 8/8 ORRI. Converts at payout per Letter Agmt Jan 9 1979. Instr #75311.',
+   lat:31.545, lng:-102.071},
+
+  // ── Vol 173/588: MBank Lien → MCorp (May 1988) ────────────────────────
+  {id:'d15', entityId:'UNASSIGNED', label:'MCorp Mgmt Solutions Inc. (Lien/Security Int.)',
+   type:'NPI', pct:0.0, county:'Upton',
+   desc:'Glasscock & Reagan Co. interests — Vol 173/588 D/T Records',
+   notes:'Assignment of Loan Docs, Liens & Security Interests from MBank Houston N.A. to MCorp Mgmt Solutions. Covers Westland Oil Dev Corp properties in Glasscock/Reagan/Upton/Midland. Instr #98792. Effective Jan 1 1988.',
+   lat:31.560, lng:-102.055},
+];
+
+// ===== IMPORT FROM DOCUMENTS =====
+function importDocs(){
+  let added = 0;
+  DOC_INTERESTS.forEach(d=>{
+    if(interests.find(x=>x.id===d.id)) return;
+    interests.push({
+      id:d.id, entityId:d.entityId, type:d.type, pct:d.pct,
+      desc:d.desc, notes:d.notes, county:d.county,
+      lat:d.lat, lng:d.lng, imported:true, label:d.label
+    });
+    added++;
+  });
+  renderAll();
+  map.fitBounds([[31.50,-102.11],[31.60,-102.00]],{padding:[40,40]});
+  if(added>0) alert(`✓ Imported ${added} interests from uploaded deed records (Upton Co., Block "B", CCSD&RGNG Survey).\n\nAll are marked UNASSIGNED — click any pin and press Edit to link it to one of your 24 entities.\n\nNote: these docs show the historical chain of title (Westland / Parker & Parsley / HenLan). Your 24 entities do not appear by name in these specific instruments.`);
+  else alert('Document interests already loaded.');
+}
+
+function getEntityColor(id){ 
+  if(id==='UNASSIGNED') return '#94A3B8';
+  const e=entities.find(x=>x.id===id); return e?e.color:'#64748B'; 
+}
+function getEntityName(id){
+  if(id==='UNASSIGNED') return '⚠ UNASSIGNED';
+  const e=entities.find(x=>x.id===id); return e?e.name:'Unknown';
+}
+
+// ===== INIT — pre-load entities =====
+const INITIAL_ENTITIES = [
+  {id:'e01',name:'WING CORPORATION',                color:'#F59E0B'},
+  {id:'e02',name:'D SQUARED INVESTMENTS',           color:'#3B82F6'},
+  {id:'e03',name:'KELLOGG INTERESTS, L.L.C.',        color:'#10B981'},
+  {id:'e04',name:'KELLOGG MANAGEMENT, L.L.C.',       color:'#EF4444'},
+  {id:'e05',name:'FERSTLER MANAGEMENT LLC',          color:'#A855F7'},
+  {id:'e06',name:'ALPINE CONTROL, LLC',              color:'#F97316'},
+  {id:'e07',name:'ALPINE MINERALS, LLC',             color:'#06B6D4'},
+  {id:'e08',name:'ALPINE RESOURCES INC',             color:'#84CC16'},
+  {id:'e09',name:'MKT PROPERTIES LLC',               color:'#14B8A6'},
+  {id:'e10',name:'KCR PROPERTIES, L.L.C.',            color:'#F43F5E'},
+  {id:'e11',name:'ALPINE PRODUCTION, LLC',           color:'#8B5CF6'},
+  {id:'e12',name:'SKYLINE INTERESTS, LLC',           color:'#FCD34D'},
+  {id:'e13',name:'LAKEFRONT REALTY, L.L.C.',          color:'#EC4899'},
+  {id:'e14',name:'ALPINE DRILLING, LLC',             color:'#059669'},
+  {id:'e15',name:'PECOS & 15TH, LTD.',               color:'#60A5FA'},
+  {id:'e16',name:'ALPINE DRILLING PROGRAM, L.P.',    color:'#DC2626'},
+  {id:'e17',name:'PACER ENERGY, LTD.',               color:'#7C3AED'},
+  {id:'e18',name:'ROTUNDA, LTD.',                    color:'#DB2777'},
+  {id:'e19',name:'TEXAS SKYLINE, LTD.',              color:'#EA580C'},
+  {id:'e20',name:'FERSTLER HOLDINGS, LP',            color:'#0891B2'},
+  {id:'e21',name:'KELLOGG HOLDINGS, LTD.',           color:'#65A30D'},
+  {id:'e22',name:'ALPINE RESOURCES, LTD.',           color:'#0D9488'},
+  {id:'e23',name:'ALPINE NATURAL RESOURCES LLC',     color:'#E11D48'},
+  {id:'e24',name:'BEND ARCH RESOURCES, LLC',         color:'#6D28D9'},
+];
+entities = INITIAL_ENTITIES;
+selEntityId = 'e01';
+
+// Auto-load all interests extracted from uploaded deed records
+DOC_INTERESTS.forEach(d=>{
+  interests.push({
+    id:d.id, entityId:d.entityId, type:d.type, pct:d.pct,
+    desc:d.desc, notes:d.notes, county:d.county,
+    lat:d.lat, lng:d.lng, imported:true, label:d.label
+  });
+});
+
+renderAll();
+// Zoom to show both the full 4-county area and the clustered deed pins in Upton
+map.fitBounds([[31.0822,-102.5868],[32.0869,-101.1985]],{padding:[20,20]});
+</script>
+</body>
+</html>
